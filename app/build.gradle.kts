@@ -48,6 +48,9 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro",
       )
+      // W31.14 release signing: 个人 fork 用 debug keystore 签 release(同样 cn=Android Debug),
+      // 真要分发再生成独立 keystore 替换。debug.keystore 在 ~/.android/ 默认路径。
+      signingConfig = signingConfigs.getByName("debug")
     }
     create("preview") {
       initWith(getByName("release"))

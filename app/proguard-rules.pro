@@ -21,3 +21,13 @@
 #-renamesourcefileattribute SourceFile
 -dontobfuscate
 -keep,allowoptimization class is.xyz.mpv.** { public protected *; }
+
+# W31.14 release: 跳过可选依赖的 missing class 警告
+# commons-compress 7z 解压走 tukaani.xz(运行时反射找类)
+-dontwarn org.tukaani.xz.**
+-dontwarn org.apache.commons.compress.archivers.sevenz.**
+-dontwarn java.lang.invoke.StringConcatFactory
+# mbassy 事件总线支持 javax.el 表达式过滤(我们用不上 EL filter)
+-dontwarn javax.el.**
+# smbj SMB Kerberos 认证(我们只用 NTLM/guest,不需要 GSS)
+-dontwarn org.ietf.jgss.**
