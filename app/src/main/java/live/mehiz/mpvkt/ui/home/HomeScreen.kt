@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import live.mehiz.mpvkt.R
 import live.mehiz.mpvkt.presentation.Screen
 import live.mehiz.mpvkt.ui.player.PlayerActivity
 import live.mehiz.mpvkt.ui.preferences.PreferencesScreen
+import live.mehiz.mpvkt.ui.smb.W31SmbBrowserScreen
 import live.mehiz.mpvkt.ui.theme.spacing
 import live.mehiz.mpvkt.ui.utils.LocalBackStack
 
@@ -81,6 +83,7 @@ object HomeScreen : Screen {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
       ) {
+        var showSmb by remember { mutableStateOf(false) }
         val uri = rememberTextFieldState()
         var isUrlValid by remember { mutableStateOf(true) }
         LaunchedEffect(uri.text) {
@@ -140,6 +143,31 @@ object HomeScreen : Screen {
           ) {
             Icon(Icons.Default.FolderOpen, null)
             Text(text = stringResource(R.string.home_open_file_picker))
+          }
+        }
+        // W31:SMB 局域网视频入口
+        OutlinedButton(onClick = { showSmb = true }) {
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(Icons.Default.Storage, null)
+            Text(text = "SMB 局域网")
+          }
+        }
+        if (showSmb) {
+          androidx.compose.runtime.key(Unit) {
+            androidx.compose.material3.Surface(
+              modifier = Modifier.fillMaxSize(),
+              color = androidx.compose.ui.graphics.Color.Black,
+            ) {
+              W31SmbBrowserScreen(
+                onDismiss = { showSmb = false },
+                onPlayFile = { file ->
+                  playFile(file.absolutePath, context)
+                },
+              )
+            }
           }
         }
       }

@@ -21,8 +21,8 @@ android {
     applicationId = "live.mehiz.mpvkt"
     minSdk = 21
     targetSdk = 36
-    versionCode = 12
-    versionName = "0.1.6"
+    versionCode = 13
+    versionName = "0.2.0"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -150,7 +150,16 @@ dependencies {
   implementation(libs.kotlinx.immutable.collections)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.truetype.parser)
+
+  // W29+:字幕库搜索解压 — zimuku/SubHD 下载回来可能是 zip/rar/7z 任一格式,
+  // 且 zip 内文件名常用 GBK(Windows 上传源)。junrar 处理 rar,commons-compress 处理 7z。
+  implementation(libs.junrar)
+  implementation(libs.commons.compress)
   implementation(libs.fsaf)
+
+  // W31:局域网 SMB 视频播放。smbj 是纯 Java SMB1/2/3 client,
+  // 把 SMB UNC 路径缓存到本地 cache,然后 mpv 当本地 file:// 播。
+  implementation(libs.smbj)
 }
 
 detekt {

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name" translatable="false">mpvKt</string>
+    <string name="app_name" translatable="false">mpvPlayer</string>
 
     <string name="generic_reset">Redefinir</string>
     <string name="generic_share">Compartilhar</string>

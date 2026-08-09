@@ -57,6 +57,12 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 truetype-parser = { module = "io.github.yubyf:truetypeparser-light", version = "2.1.4" }
 fsaf = { module = "com.github.K1rakishou:Fuck-Storage-Access-Framework", version = "1.1.3" }
 
+junrar = { module = "com.github.junrar:junrar", version = "7.5.5" }
+commons-compress = { module = "org.apache.commons:commons-compress", version = "1.26.2" }
+
+# W31:SMB 局域网视频播放。smbj 是纯 Java SMB client (SMB1/2/3),无 JNI。
+smbj = { module = "com.hierynomus:smbj", version = "0.13.0" }
+
 about-libs-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "about-libs" }
 about-libs-ui-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "about-libs" }
 simple-icons = { module = "br.com.devsrsouza.compose.icons:simple-icons", version = "1.1.1" }

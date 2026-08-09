@@ -1,5 +1,6 @@
 package live.mehiz.mpvkt.ui.player.controls
 
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
@@ -86,6 +87,7 @@ import live.mehiz.mpvkt.ui.player.controls.components.SeekbarWithTimers
 import live.mehiz.mpvkt.ui.player.controls.components.TextPlayerUpdate
 import live.mehiz.mpvkt.ui.player.controls.components.VolumeSlider
 import live.mehiz.mpvkt.ui.player.controls.components.sheets.toFixed
+import live.mehiz.mpvkt.ui.subtitlefinder.SubtitleFinderScreen
 import live.mehiz.mpvkt.ui.theme.playerRippleConfiguration
 import live.mehiz.mpvkt.ui.theme.spacing
 import org.koin.compose.koinInject
@@ -121,6 +123,7 @@ fun PlayerControls(
   val showSeekTime by playerPreferences.showSeekTimeWhileSeeking.collectAsState()
   var isSeeking by remember { mutableStateOf(false) }
   var resetControls by remember { mutableStateOf(true) }
+  var showSubtitleFinder by remember { mutableStateOf(false) }
   val seekText by viewModel.seekText.collectAsState()
   val currentChapter by MPVLib.propInt["chapter"].collectAsState()
   val mpvDecoder by MPVLib.propString["hwdec-current"].collectAsState()
@@ -612,6 +615,7 @@ fun PlayerControls(
       onStartSleepTimer = viewModel::startTimer,
       buttons = customButtons.getButtons().toImmutableList(),
       onOpenPanel = onOpenPanel,
+      onOpenSubtitleFinder = { showSubtitleFinder = true },
       onDismissRequest = { onOpenSheet(Sheets.None) },
     )
     val panel by viewModel.panelShown.collectAsState()
@@ -619,6 +623,20 @@ fun PlayerControls(
       panelShown = panel,
       onDismissRequest = { onOpenPanel(Panels.None) },
     )
+    AnimatedVisibility(
+      visible = showSubtitleFinder,
+      enter = fadeIn(playerControlsEnterAnimationSpec()),
+      exit = fadeOut(playerControlsExitAnimationSpec()),
+    ) {
+      SubtitleFinderScreen(
+        initialQuery = "",
+        onDismiss = { showSubtitleFinder = false },
+        onSubtitleFound = { file ->
+          viewModel.addSubtitle(Uri.fromFile(file))
+          showSubtitleFinder = false
+        },
+      )
+    }
   }
 }
 
