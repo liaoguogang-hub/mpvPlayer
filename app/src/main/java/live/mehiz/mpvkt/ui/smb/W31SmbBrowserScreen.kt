@@ -43,11 +43,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/// W31 SMB 浏览器:列出 share 内的目录/视频文件,点击下载后用 [onPlayFile] 播本地 cache。
+/// W31.7 SMB prebuffer 字节数(默认 32MB)。与 W31SmbClient.DEFAULT_PREBUFFER_BYTES 对齐。
+private const val SMB_PREBUFFER_BYTES: Long = 32L * 1024 * 1024
+
+/// W31 SMB 浏览器:列出 share 内的目录/视频文件,点击后用 [onPlayFile] 播本地 cache。
 ///
-/// Phase 1 限制:
-///   - 全文件下载到 cacheDir/smb/<server>/<share>/<path>,1GB 视频约 30-60s
-///   - 不支持边下边播
+/// W31.7 边下边播:
+///   - 点击文件 → 下 32MB prebuffer → 立即开播 (mpv 拿 cache File 当 file://)
+///   - 剩余字节在 W31SmbDownloadScope 后台续传到同一文件,mpv 边播边读到新数据
 ///   - 目录浏览只一层(列表点进去再次进入子目录)
 @Composable
 fun W31SmbBrowserScreen(
@@ -194,21 +197,29 @@ fun W31SmbBrowserScreen(
                         scope.launch {
                           downloadBytes = 0L
                           downloadTotal = 0L
-                          val r = client!!.downloadToCache(
+                          // W31.7 边下边播:phase 1 下前 32MB 立即开播,phase 2 在 W31SmbDownloadScope
+                          // 后台续传剩余字节到同一文件,mpv 边播边读到新追加的数据。
+                          val r = client!!.downloadForStreaming(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
+                            prebufferBytes = SMB_PREBUFFER_BYTES,
+                            onPrebufferReady = { file, prebuffered, total ->
+                              downloading = null
+                              // onPrebufferReady 在 IO 线程触发,startActivity 必须主线程
+                              scope.launch(Dispatchers.Main) {
+                                onPlayFile(file)
+                                onDismiss()
+                              }
+                            },
                             onProgress = { read, total ->
                               downloadBytes = read
                               downloadTotal = total
                               if (total > 0) downloadProgress = read.toFloat() / total
                             },
                           )
-                          downloading = null
-                          r.onSuccess { f ->
-                            onPlayFile(f)
-                            onDismiss()
-                          }.onFailure { e ->
+                          r.onFailure { e ->
+                            downloading = null
                             error = "下载失败: ${e.message ?: e.javaClass.simpleName}"
                           }
                         }
