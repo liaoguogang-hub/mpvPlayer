@@ -22,6 +22,9 @@ internal fun Uri.resolveUri(context: Context): String? {
     "content" -> openContentFd(context)
     "data" -> "data://$schemeSpecificPart"
     in Utils.PROTOCOLS -> toString()
+    // W31.11 SMB 缓存文件走 Intent.ACTION_VIEW 时 Uri 没 scheme (来自
+    // Uri.parse("/data/user/0/.../cache/smb/.../movie.mp4")),把 path 当 file:// 处理。
+    null -> path
     else -> null
   }
 
