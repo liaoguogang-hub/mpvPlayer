@@ -15,6 +15,19 @@
     <string name="home_url_input_label">URL</string>
     <string name="home_invalid_protocol">Invalid protocol</string>
 
+    <string name="home_recent_title">Recently played</string>
+    <string name="home_view_all">View all</string>
+
+    <string name="history_title">Playback history</string>
+    <string name="history_empty">No playback history yet</string>
+    <string name="history_empty_action">Pick a video to start</string>
+    <string name="history_clear_all">Clear all</string>
+    <string name="history_clear_confirm_title">Clear playback history?</string>
+    <string name="history_clear_confirm_subtitle">This removes all entries from your playback history. Resume positions and settings are not affected.</string>
+    <string name="history_clear_toast">Playback history cleared</string>
+    <string name="history_item_delete">Delete</string>
+    <string name="history_item_duration_unknown">Unknown duration</string>
+
     <string name="pref_preferences">Preferences</string>
 
     <string name="pref_appearance_title">Appearance</string>

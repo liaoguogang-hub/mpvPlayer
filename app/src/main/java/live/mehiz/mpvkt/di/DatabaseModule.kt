@@ -4,8 +4,10 @@ import androidx.room.Room
 import live.mehiz.mpvkt.database.Migrations
 import live.mehiz.mpvkt.database.MpvKtDatabase
 import live.mehiz.mpvkt.database.repository.CustomButtonRepositoryImpl
+import live.mehiz.mpvkt.database.repository.PlaybackHistoryRepositoryImpl
 import live.mehiz.mpvkt.database.repository.PlaybackStateRepositoryImpl
 import live.mehiz.mpvkt.domain.custombuttons.repository.CustomButtonRepository
+import live.mehiz.mpvkt.domain.playbackhistory.repository.PlaybackHistoryRepository
 import live.mehiz.mpvkt.domain.playbackstate.repository.PlaybackStateRepository
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.singleOf
@@ -22,4 +24,5 @@ val DatabaseModule = module {
 
   singleOf(::CustomButtonRepositoryImpl).bind(CustomButtonRepository::class)
   singleOf(::PlaybackStateRepositoryImpl).bind(PlaybackStateRepository::class)
+  singleOf(::PlaybackHistoryRepositoryImpl).bind(PlaybackHistoryRepository::class)
 }

@@ -49,8 +49,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import live.mehiz.mpvkt.database.entities.CustomButtonEntity
+import live.mehiz.mpvkt.database.entities.PlaybackHistoryEntity
 import live.mehiz.mpvkt.database.entities.PlaybackStateEntity
 import live.mehiz.mpvkt.databinding.PlayerLayoutBinding
+import live.mehiz.mpvkt.domain.playbackhistory.repository.PlaybackHistoryRepository
 import live.mehiz.mpvkt.domain.playbackstate.repository.PlaybackStateRepository
 import live.mehiz.mpvkt.preferences.AdvancedPreferences
 import live.mehiz.mpvkt.preferences.AudioPreferences
@@ -69,6 +71,7 @@ class PlayerActivity : AppCompatActivity() {
   private val binding by lazy { PlayerLayoutBinding.inflate(layoutInflater) }
   private val playerObserver by lazy { PlayerObserver(this) }
   private val playbackStateRepository: PlaybackStateRepository by inject()
+  private val playbackHistoryRepository: PlaybackHistoryRepository by inject()
   val player by lazy { binding.player }
   val windowInsetsController by lazy { WindowCompat.getInsetsController(window, window.decorView) }
   val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
@@ -559,6 +562,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
           loadVideoPlaybackState(fileName)
+          saveToHistory(fileName)
         }
         setOrientation()
         viewModel.changeVideoAspect(playerPreferences.videoAspect.get())
@@ -618,6 +622,22 @@ class PlayerActivity : AppCompatActivity() {
       state?.lastPosition?.let { if (it != 0) MPVLib.setPropertyInt("time-pos", it) }
     }
     MPVLib.setPropertyDouble("sub-speed", state?.subSpeed ?: subtitlesPreferences.defaultSubSpeed.get().toDouble())
+  }
+
+  private suspend fun saveToHistory(fileName: String) {
+    val playbackUri = intent.data?.toString() ?: fileName
+    val title = MPVLib.getPropertyString("media-title").orEmpty()
+      .takeIf { it.isNotBlank() && !it.isDigitsOnly() } ?: fileName
+    val duration = MPVLib.getPropertyDouble("duration")?.toInt() ?: 0
+    playbackHistoryRepository.upsert(
+      PlaybackHistoryEntity(
+        uri = playbackUri,
+        displayName = title,
+        lastPlayedAt = System.currentTimeMillis(),
+        duration = duration,
+      ),
+    )
+    playbackHistoryRepository.pruneOldest(keepCount = MAX_HISTORY_ENTRIES)
   }
 
   private fun setReturnIntent() {
@@ -854,6 +874,7 @@ class PlayerActivity : AppCompatActivity() {
   companion object {
     // action of result intent
     private const val RESULT_INTENT = "live.mehiz.mpvkt.ui.player.PlayerActivity.result"
+    private const val MAX_HISTORY_ENTRIES = 500
   }
 }
 
