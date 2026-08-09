@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W31.10 mpv 完整图标(Android 5-7 兜底,所有 density 共用同一 vector)。-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"
+        android:fillColor="#E1E1E1" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M32.58,2.91A27.95,27.95 0,0 0,4.63 30.86A27.95,27.95 0,0 0,32.58 58.81A27.95,27.95 0,0 0,60.53 30.86A27.95,27.95 0,0 0,32.58 2.91zM33.31,4.05A25.95,25.95 0,0 1,59.26 30.01A25.95,25.95 0,0 1,33.31 55.96A25.95,25.95 0,0 1,7.36 30.01A25.95,25.95 0,0 1,33.31 4.05z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="m32.21,18.13a12.85,12.85 0,0 0,-12.85 12.85,12.85 12.85,0 0,0 12.85,12.85 12.85,12.85 0,0 0,12.85 -12.85,12.85 12.85,0 0,0 -12.85,-12.85zM28.96,25.21 L38.17,30.79 28.96,36.66 28.96,25.21zM54.81,28.29a20,20 0,0 1,-20 20,20 20,0 0,1 -20,-20 20,20 0,0 1,20 -20,20 20,0 0,1 20,20z" />
+    <path
+        android:fillColor="#E1E1E1"
+        android:pathData="M28.96,25.21 L38.17,30.79 28.96,36.66 28.96,25.21z" />
+</vector>

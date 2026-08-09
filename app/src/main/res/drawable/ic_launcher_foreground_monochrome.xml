@@ -1,0 +1,5 @@
+<!-- W31.10 monochrome (Android 13+ 主题图标用)。inset 26dp 把 24dp 的 mpv 标志居中缩到
+     adaptive icon 72×72 安全区内,跟 mpv-android 的 mpv_monochrome.xml 一致。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground"
+    android:inset="26dp" />
