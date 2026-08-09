@@ -5,8 +5,9 @@ import android.content.Intent
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,12 +53,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.net.toUri
 import com.github.k1rakishou.fsaf.FileManager
 import `is`.xyz.mpv.Utils.PROTOCOLS
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import live.mehiz.mpvkt.R
 import live.mehiz.mpvkt.database.entities.PlaybackHistoryEntity
 import live.mehiz.mpvkt.domain.playbackhistory.repository.PlaybackHistoryRepository
 import live.mehiz.mpvkt.presentation.Screen
+import live.mehiz.mpvkt.presentation.components.ConfirmDialog
 import live.mehiz.mpvkt.ui.history.HistoryScreen
 import live.mehiz.mpvkt.ui.player.PlayerActivity
 import live.mehiz.mpvkt.ui.preferences.PreferencesScreen
@@ -244,12 +249,24 @@ object HomeScreen : Screen {
     }
   }
 
+  @OptIn(ExperimentalFoundationApi::class)
   @Composable
   private fun RecentHistoryCard(
     entry: PlaybackHistoryEntity,
     onClick: () -> Unit,
   ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    val historyRepository: PlaybackHistoryRepository = koinInject()
+    val scope = rememberCoroutineScope()
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    ElevatedCard(
+      modifier = Modifier
+        .fillMaxWidth()
+        .combinedClickable(
+          onClick = onClick,
+          onLongClick = { showDeleteDialog = true },
+        ),
+    ) {
       Row(
         modifier = Modifier
           .fillMaxWidth()
@@ -285,6 +302,18 @@ object HomeScreen : Screen {
           )
         }
       }
+    }
+
+    if (showDeleteDialog) {
+      ConfirmDialog(
+        title = stringResource(R.string.home_recent_item_delete_title),
+        subtitle = stringResource(R.string.home_recent_item_delete_subtitle),
+        onConfirm = {
+          showDeleteDialog = false
+          scope.launch(Dispatchers.IO) { historyRepository.deleteByUri(entry.uri) }
+        },
+        onCancel = { showDeleteDialog = false },
+      )
     }
   }
 

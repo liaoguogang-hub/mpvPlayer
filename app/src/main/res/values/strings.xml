@@ -27,6 +27,8 @@
     <string name="history_clear_toast">Playback history cleared</string>
     <string name="history_item_delete">Delete</string>
     <string name="history_item_duration_unknown">Unknown duration</string>
+    <string name="home_recent_item_delete_title">Delete this entry?</string>
+    <string name="home_recent_item_delete_subtitle">This entry will be removed from your playback history. Resume positions and settings are not affected.</string>
 
     <string name="pref_preferences">Preferences</string>
 
