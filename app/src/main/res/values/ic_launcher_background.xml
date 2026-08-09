@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- W31.10 跟 mpv-android 一致的浅灰背景 (#E1E1E1) -->
-    <color name="ic_launcher_background">#E1E1E1</color>
-</resources>

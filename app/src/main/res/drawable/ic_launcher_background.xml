@@ -1,0 +1,11 @@
+<!-- W31.12 PlexiPlay 风格图标背景: 蓝紫线性渐变(顶 #4A3AC4 → 底 #AC4FC6)。
+     adaptive icon 里 android:background 接受 drawable,直接引用此文件。
+     legacy mipmap-{density}/ic_launcher.xml 用纯紫底(向量不支持渐变)。-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="linear"
+        android:angle="270"
+        android:startColor="#4A3AC4"
+        android:endColor="#AC4FC6" />
+</shape>
