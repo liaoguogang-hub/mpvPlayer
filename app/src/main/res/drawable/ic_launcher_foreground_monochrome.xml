@@ -1,19 +1,10 @@
+<!-- W31.8 monochrome(Android 13+ 主题图标用):单色播放三角。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-  <group android:scaleX="0.7"
-      android:scaleY="0.7"
-      android:translateX="3.6"
-      android:translateY="3.6">
+    android:viewportWidth="108"
+    android:viewportHeight="108">
     <path
-        android:fillAlpha="0.6"
-        android:pathData="M12,20A1,1 0,0 1,8 16L14,10A1,1 0,0 1,18 14Z"
-        android:fillColor="#37143F"/>
-    <path
-        android:fillAlpha="1"
-        android:pathData="M8,8A1,1 0,0 1,12 4L18,10A1,1 0,0 1,14 14Z"
-        android:fillColor="#693A72"/>
-  </group>
+        android:pathData="M48,40 L48,68 L72,54 Z"
+        android:fillColor="#FFFFFF" />
 </vector>
