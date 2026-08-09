@@ -197,16 +197,19 @@ fun W31SmbBrowserScreen(
                         scope.launch {
                           downloadBytes = 0L
                           downloadTotal = 0L
-                          // W31.7 边下边播:phase 1 下前 32MB 立即开播,phase 2 在 W31SmbDownloadScope
-                          // 后台续传剩余字节到同一文件,mpv 边播边读到新追加的数据。
+                          // W31.7+W31.9 边下边播 + moov-at-end 兜底:
+                          //   - faststart MP4 / MKV / AVI / 其它: phase 1 (32MB) 后立即开播,
+                          //     phase 2 在 W31SmbDownloadScope 后台 append 剩余字节。
+                          //   - moov-at-end MP4 (常见于手机拍摄): 同步下完整个文件再开播,
+                          //     避免 mpv 扫被 phase 2 正在 append 的尾部失败导致黑屏。
                           val r = client!!.downloadForStreaming(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
                             prebufferBytes = SMB_PREBUFFER_BYTES,
-                            onPrebufferReady = { file, prebuffered, total ->
+                            onReadyToPlay = { file ->
                               downloading = null
-                              // onPrebufferReady 在 IO 线程触发,startActivity 必须主线程
+                              // onReadyToPlay 在 IO 线程触发,startActivity 必须主线程
                               scope.launch(Dispatchers.Main) {
                                 onPlayFile(file)
                                 onDismiss()

@@ -137,42 +137,82 @@ class W31SmbClient(
     }
   }
 
-  /// W31.7:边下边播。先把前 [prebufferBytes] (默认 32MB) 写到目标文件,
-  /// 立即回调 [onPrebufferReady] 让 UI 启动 mpv;然后 phase 2 续传剩余字节到
-  /// 同一文件 — 在 [W31SmbDownloadScope] 应用级 scope 里 fire-and-forget 跑,
-  /// 即便 BrowserScreen 已 dismiss 也会继续,mpv 边播边读到新追加的数据。
+  /// W31.7 边下边播 + W31.9 moov-at-end MP4 fallback:
   ///
-  /// 限制:
-  ///   - 对 faststart MP4 / MKV / AVI 立即可播 (header 在文件头)
-  ///   - 对 moov-at-end MP4 需要完整文件才能播,prebufferReady 后 mpv 报错,
-  ///     等 phase 2 完成重试
-  ///   - 调用方在 phase 1 完成后应立刻 [onPlayFile] + 关 SMB UI,phase 2 在后台跑
+  ///   1. phase 1: 下前 [prebufferBytes] (默认 32MB) 到目标文件。
+  ///   2. 扫一下文件前 256KB 判断是否是「moov 在末尾」的 MP4 — 这种格式 mpv
+  ///      需要扫到文件尾部才能找 moov atom,如果边下边播会让 mpv 扫到正在被
+  ///      追加的尾部而解不出来,黑屏。
+  ///   3a. faststart MP4 / MKV / AVI / 其它 → 立刻回调 [onReadyToPlay],把剩
+  ///       余字节挂到 [W31SmbDownloadScope] 后台 fire-and-forget append。
+  ///   3b. moov-at-end MP4 → 同步下完整个文件,再回调 [onReadyToPlay]。
+  ///
+  /// 调用方不管哪种情形都只需要在 [onReadyToPlay] 里启动 mpv + 关 SMB UI。
   suspend fun downloadForStreaming(
     shareName: String,
     remotePath: String,
     cacheRootDir: File,
     prebufferBytes: Long = DEFAULT_PREBUFFER_BYTES,
-    onPrebufferReady: (target: File, prebuffered: Long, total: Long) -> Unit,
+    onReadyToPlay: (target: File) -> Unit,
     onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null,
   ): Result<File> = withContext(Dispatchers.IO) {
     runCatching {
-      // phase 1: 开 share + 下前 N MB + 关 share。返回 (file, total, prebuffered)。
       val (file, total, prebuffered) = downloadPrebufferOnly(shareName, remotePath, cacheRootDir, prebufferBytes, onProgress).getOrThrow()
-      onPrebufferReady(file, prebuffered, total)
 
-      // phase 2: 重新开 share + append 剩余字节到同一文件。挂到应用级 scope。
       if (prebuffered < total) {
-        W31SmbDownloadScope.launch {
-          try {
-            downloadRestOnly(shareName, remotePath, file, prebuffered, total, onProgress)
-            onProgress?.invoke(total, total)
-          } catch (_: Throwable) {
-            // 后台续传失败是 best-effort,UI 已 dismiss 不必打扰用户
+        if (isMoovAtEndMp4(file)) {
+          // moov-at-end MP4:同步下完整个文件再开播,避免 mpv 扫被 phase 2
+          // 正在 append 的尾部失败导致黑屏。
+          downloadRestOnly(shareName, remotePath, file, prebuffered, total, onProgress)
+          onProgress?.invoke(total, total)
+        } else {
+          // faststart MP4 / MKV / AVI / 其它:挂后台 fire-and-forget append。
+          W31SmbDownloadScope.launch {
+            try {
+              downloadRestOnly(shareName, remotePath, file, prebuffered, total, onProgress)
+              onProgress?.invoke(total, total)
+            } catch (_: Throwable) {
+              // 后台续传失败是 best-effort,UI 已 dismiss 不必打扰用户
+            }
           }
         }
       }
+      onReadyToPlay(file)
       file
     }
+  }
+
+  /// 扫文件前 256KB,判断是否是「moov 在文件末尾」的 MP4。
+  ///
+  /// MP4 = 一系列 box,每个 box 头 4 字节 size + 4 字节 tag。
+  /// - 字节 4-7 = "ftyp" 标识是 MP4。
+  /// - 顶层 box 里有 "moov" tag → faststart(moov 在文件头)。
+  /// - 256KB 内走完所有顶层 box 都没 "moov" → moov 在文件末尾。
+  ///
+  /// 注意这只扫前 256KB,理论上罕见的「moov 恰好在 256KB ~ 几 MB 之间」会误判
+  /// 为 moov-at-end,代价只是多等几秒全量下载,可接受。
+  private fun isMoovAtEndMp4(file: File): Boolean {
+    if (!file.exists() || file.length() < 16) return false
+    val buf = ByteArray(256 * 1024)
+    val n = file.inputStream().use { it.read(buf) }
+    if (n < 16) return false
+    // MP4: bytes 4-7 = "ftyp"
+    val ftyp = byteArrayOf('f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
+    if (!buf.copyOfRange(4, 8).contentEquals(ftyp)) return false
+    // 走顶层 box
+    var i = 0
+    while (i + 8 <= n) {
+      val size = ((buf[i].toInt() and 0xFF) shl 24) or
+        ((buf[i + 1].toInt() and 0xFF) shl 16) or
+        ((buf[i + 2].toInt() and 0xFF) shl 8) or
+        (buf[i + 3].toInt() and 0xFF)
+      if (size == 0 || size == 1) return true
+      val tag = String(buf, i + 4, 4, Charsets.US_ASCII)
+      if (tag == "moov") return false
+      if (i + size > n || size > Int.MAX_VALUE) return true
+      i += size
+    }
+    return true
   }
 
   /// 下载文件前 [prebufferBytes] 字节到 cache。返回 (target, totalSize, actualDownloaded)。
