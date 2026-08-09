@@ -65,6 +65,8 @@ fun W31SmbBrowserScreen(
   var error by remember { mutableStateOf<String?>(null) }
   var downloading by remember { mutableStateOf<String?>(null) }
   var downloadProgress by remember { mutableStateOf(0f) }
+  var downloadBytes by remember { mutableStateOf(0L) }
+  var downloadTotal by remember { mutableStateOf(0L) }
 
   var client by remember { mutableStateOf<W31SmbClient?>(null) }
 
@@ -136,12 +138,22 @@ fun W31SmbBrowserScreen(
           modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
           color = Color(0xFF80C8FF),
         )
-        Text(
-          text = downloading!!,
-          color = Color(0xFFCCCCCC),
-          fontSize = 11.sp,
-          modifier = Modifier.padding(horizontal = 4.dp),
-        )
+        Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+          Text(
+            text = downloading!!,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+          )
+          if (downloadTotal > 0) {
+            Text(
+              text = "${formatSize(downloadBytes)} / ${formatSize(downloadTotal)}  (${(downloadProgress * 100).toInt()}%)",
+              color = Color(0xFFAAAAAA),
+              fontSize = 11.sp,
+              modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+        }
       }
 
       Box(modifier = Modifier.fillMaxSize()) {
@@ -180,11 +192,15 @@ fun W31SmbBrowserScreen(
                         downloading = fullPath
                         downloadProgress = 0f
                         scope.launch {
+                          downloadBytes = 0L
+                          downloadTotal = 0L
                           val r = client!!.downloadToCache(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
                             onProgress = { read, total ->
+                              downloadBytes = read
+                              downloadTotal = total
                               if (total > 0) downloadProgress = read.toFloat() / total
                             },
                           )
