@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.github.k1rakishou.fsaf.FileManager
@@ -204,11 +205,13 @@ data class FilePickerScreen(val uri: String) : Screen {
         imageVector = fileIcon(isDirectory = isDirectory, fileExtension = name.substringAfterLast('.')),
         contentDescription = null,
       )
-      Column {
+      Column(modifier = Modifier.weight(1f)) {
         Text(
           text = name,
           color = MaterialTheme.colorScheme.onSurface,
           style = MaterialTheme.typography.bodyLarge,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
         )
         if (isDirectory && lastModified == null) return@Column
         Row(

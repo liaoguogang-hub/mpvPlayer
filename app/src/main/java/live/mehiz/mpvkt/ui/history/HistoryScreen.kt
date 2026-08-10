@@ -180,7 +180,7 @@ private fun HistoryListItem(
         ) {
           Text(
             text = entry.displayName,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.titleMedium,
           )

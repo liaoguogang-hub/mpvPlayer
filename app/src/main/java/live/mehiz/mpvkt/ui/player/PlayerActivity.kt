@@ -118,6 +118,12 @@ class PlayerActivity : AppCompatActivity() {
     setupMPV()
     setupAudio()
     setupMediaSession()
+    // W31.19: setOptionString 在 mpv 已 init 后对下一个 loadfile 生效,强制把 fileName
+    // 当作 title,避免 mpv 从 file metadata 提取纯数字 episode number (MKV TITLE tag = "002" 等)
+    val initialName = getFileName(intent)
+    if (initialName.isNotBlank()) {
+      MPVLib.setOptionString("force-media-title", initialName)
+    }
     getPlayableUri(intent)?.let(player::playFile)
     setOrientation()
 
@@ -556,10 +562,9 @@ class PlayerActivity : AppCompatActivity() {
       MPVLib.mpvEventId.MPV_EVENT_FILE_LOADED -> {
         fileName = getFileName(intent)
         setIntentExtras(intent.extras)
-        val mediaTitle = MPVLib.getPropertyString("media-title")
-        if (mediaTitle.isNullOrBlank() || mediaTitle.isDigitsOnly()) {
-          MPVLib.setPropertyString("media-title", fileName)
-        }
+        // W31.19: media-title 已由 onCreate/onNewIntent 的 force-media-title option 控制,
+        // 不再在 FILE_LOADED 后兜底 setPropertyString (会和 mpv 内部 metadata update race,
+        // 导致显示成 3 位数字 episode number 而不是 fileName)
         lifecycleScope.launch(Dispatchers.IO) {
           loadVideoPlaybackState(fileName)
           saveToHistory(fileName)
@@ -654,6 +659,11 @@ class PlayerActivity : AppCompatActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
 
+    // W31.19: 同 onCreate,先 setOptionString 再 loadfile,强制用 fileName 作 title
+    val name = getFileName(intent)
+    if (name.isNotBlank()) {
+      MPVLib.setOptionString("force-media-title", name)
+    }
     getPlayableUri(intent)?.let { MPVLib.command("loadfile", it) }
     setIntent(intent)
   }

@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -237,7 +238,13 @@ fun W31SmbBrowserScreen(
                     tint = if (entry.isDirectory) Color(0xFF80C8FF) else Color(0xFFCCCCCC),
                   )
                   Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                    Text(entry.name, color = Color.White, fontSize = 14.sp)
+                    Text(
+                      text = entry.name,
+                      color = Color.White,
+                      fontSize = 14.sp,
+                      maxLines = 2,
+                      overflow = TextOverflow.Ellipsis,
+                    )
                     if (!entry.isDirectory && entry.size > 0) {
                       Text(
                         text = formatSize(entry.size),

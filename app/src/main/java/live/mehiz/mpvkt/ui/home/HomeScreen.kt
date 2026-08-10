@@ -17,9 +17,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
@@ -107,9 +108,10 @@ object HomeScreen : Screen, KoinComponent {
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .padding(padding),
+          .padding(padding)
+          .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
       ) {
         // W31.15: 最近播放 section,只在有数据时渲染
         if (history.isNotEmpty()) {
@@ -192,6 +194,25 @@ object HomeScreen : Screen, KoinComponent {
               Text(text = stringResource(R.string.home_open_url))
             }
           }
+          // W31.20: 默认用 app 内置 FilePickerScreen 浏览视频(分 2 行文件名 + 文件大小 +
+          // 修改时间,避免系统 SAF picker "最近"列表单行截断)。SAF picker 留作高级入口
+          // 满足需要跨 app 共享文件/选 SD 卡等场景。
+          val fileManager = FileManager(context)
+          val directoryPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocumentTree(),
+          ) {
+            if (it == null) return@rememberLauncherForActivityResult
+            backstack.add(FilePickerScreen(fileManager.fromUri(it)!!.getFullPath()))
+          }
+          OutlinedButton(onClick = { directoryPicker.launch(null) }) {
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Icon(Icons.Default.FolderOpen, null)
+              Text(text = stringResource(R.string.home_browse_files))
+            }
+          }
           val documentPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.OpenDocument(),
           ) {
@@ -208,32 +229,11 @@ object HomeScreen : Screen, KoinComponent {
             }
             playFile(it.toString(), context)
           }
-          OutlinedButton(
-            onClick = { documentPicker.launch(arrayOf("*/*")) },
-          ) {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Icon(Icons.Default.FileOpen, null)
-              Text(text = stringResource(R.string.home_pick_file))
-            }
-          }
-          val fileManager = FileManager(context)
-          val directoryPicker = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocumentTree(),
-          ) {
-            if (it == null) return@rememberLauncherForActivityResult
-            backstack.add(FilePickerScreen(fileManager.fromUri(it)!!.getFullPath()))
-          }
-          OutlinedButton(onClick = { directoryPicker.launch(null) }) {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Icon(Icons.Default.FolderOpen, null)
-              Text(text = stringResource(R.string.home_open_file_picker))
-            }
+          TextButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
+            Text(
+              text = stringResource(R.string.home_open_saf_picker),
+              style = MaterialTheme.typography.labelMedium,
+            )
           }
           // W31:SMB 局域网视频入口
           OutlinedButton(onClick = { showSmb = true }) {
@@ -303,7 +303,7 @@ object HomeScreen : Screen, KoinComponent {
         ) {
           Text(
             text = entry.displayName,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodyLarge,
           )
