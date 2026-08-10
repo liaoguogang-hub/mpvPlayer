@@ -49,6 +49,7 @@ import live.mehiz.mpvkt.domain.playbackhistory.repository.PlaybackHistoryReposit
 import live.mehiz.mpvkt.presentation.Screen
 import live.mehiz.mpvkt.presentation.components.ConfirmDialog
 import live.mehiz.mpvkt.ui.player.PlayerActivity
+import live.mehiz.mpvkt.ui.player.isPlayable
 import live.mehiz.mpvkt.ui.theme.spacing
 import org.koin.compose.koinInject
 
@@ -103,6 +104,13 @@ object HistoryScreen : Screen {
               HistoryListItem(
                 entry = entry,
                 onClick = {
+                  // W31.18: 预检 content URI 权限,失效就 Toast + 删条目,避免 PlayerActivity.onCreate 闪退
+                  val uri = runCatching { entry.uri.toUri() }.getOrNull()
+                  if (uri != null && !uri.isPlayable(context)) {
+                    Toast.makeText(context, "File no longer accessible, removing from history", Toast.LENGTH_LONG).show()
+                    scope.launch(Dispatchers.IO) { historyRepository.deleteByUri(entry.uri) }
+                    return@HistoryListItem
+                  }
                   try {
                     context.startActivity(
                       android.content.Intent(android.content.Intent.ACTION_VIEW, entry.uri.toUri())

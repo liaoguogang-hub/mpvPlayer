@@ -59,3 +59,17 @@ internal val imageExtensions = listOf(
 )
 
 inline fun <reified T> MPVNode.toObject(json: Json): T = json.decodeFromString<T>(toJson())
+
+// W31.18: 历史播放点开前预检 content URI 权限。
+// ACTION_OPEN_DOCUMENT grant 默认跟 Activity 走,重启 app 后失效,openFileDescriptor 会
+// 抛 SecurityException,而 PlayerActivity.onCreate 是异步,外层 try/catch 抓不到导致闪退。
+// 这里同步 try 一次,失败由 caller Toast + deleteByUri。
+internal fun Uri.isPlayable(context: Context): Boolean {
+  if (scheme != "content") return true
+  return try {
+    context.contentResolver.openFileDescriptor(this, "r")?.close()
+    true
+  } catch (_: Exception) {
+    false
+  }
+}

@@ -3,6 +3,7 @@ package live.mehiz.mpvkt.ui.home
 import android.content.Context
 import android.content.Intent
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -64,14 +65,19 @@ import live.mehiz.mpvkt.presentation.Screen
 import live.mehiz.mpvkt.presentation.components.ConfirmDialog
 import live.mehiz.mpvkt.ui.history.HistoryScreen
 import live.mehiz.mpvkt.ui.player.PlayerActivity
+import live.mehiz.mpvkt.ui.player.isPlayable
 import live.mehiz.mpvkt.ui.preferences.PreferencesScreen
 import live.mehiz.mpvkt.ui.smb.W31SmbBrowserScreen
 import live.mehiz.mpvkt.ui.theme.spacing
 import live.mehiz.mpvkt.ui.utils.LocalBackStack
 import org.koin.compose.koinInject
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 
 @Serializable
-object HomeScreen : Screen {
+object HomeScreen : Screen, KoinComponent {
+  // W31.18: 让 playFile() (非 @Composable) 能拿 repository 做 deleteByUri
+  private val historyRepo: PlaybackHistoryRepository by inject()
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
@@ -190,6 +196,16 @@ object HomeScreen : Screen {
             ActivityResultContracts.OpenDocument(),
           ) {
             if (it == null) return@rememberLauncherForActivityResult
+            // W31.18: ACTION_OPEN_DOCUMENT 返回的 content URI 默认带临时 grant
+            // (跟着 Activity 生命周期走),重启 app 后再访问就 SecurityException。
+            // 历史播放点开历史记录会取这个 URI 重启,必须 take 持久权限。
+            try {
+              val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+              context.contentResolver.takePersistableUriPermission(it, flags)
+            } catch (e: SecurityException) {
+              // 极少数 provider 不允许持久化,不影响本次播放
+              android.util.Log.w("HomeScreen", "takePersistableUriPermission failed: ${e.message}")
+            }
             playFile(it.toString(), context)
           }
           OutlinedButton(
@@ -336,6 +352,15 @@ object HomeScreen : Screen {
     filepath: String,
     context: Context,
   ) {
+    // W31.18: 预检 content URI 权限,失效就 Toast + 删历史条目,避免 PlayerActivity.onCreate 闪退
+    val uri = runCatching { filepath.toUri() }.getOrNull()
+    if (uri != null && !uri.isPlayable(context)) {
+      Toast.makeText(context, "File no longer accessible, removing from history", Toast.LENGTH_LONG).show()
+      kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        historyRepo.deleteByUri(filepath)
+      }
+      return
+    }
     val i = Intent(Intent.ACTION_VIEW, filepath.toUri())
     i.setClass(context, PlayerActivity::class.java)
     context.startActivity(i)
