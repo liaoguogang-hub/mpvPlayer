@@ -1,6 +1,7 @@
 import com.android.build.api.variant.FilterConfiguration
 import io.gitlab.arturbosch.detekt.Detekt
 import org.apache.commons.io.output.ByteArrayOutputStream
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.ksp)
@@ -13,6 +14,13 @@ plugins {
   alias(libs.plugins.kotlinx.serialization)
 }
 
+// W31.22: release keystore (独立于 debug,真分发前置)。keystore.properties 在 .gitignore,
+// 仓库只放 buildTypes 这块引用逻辑,密码不进版本控制。
+val keystoreProperties = Properties().apply {
+  val f = rootProject.file("app/keystore.properties")
+  if (f.exists()) load(f.inputStream())
+}
+
 android {
   namespace = "live.mehiz.mpvkt"
   compileSdk = 36
@@ -21,8 +29,8 @@ android {
     applicationId = "live.mehiz.mpvkt"
     minSdk = 21
     targetSdk = 36
-    versionCode = 22
-    versionName = "0.2.9"
+    versionCode = 23
+    versionName = "0.3.0"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -40,6 +48,19 @@ android {
     }
   }
 
+  // W31.22: 独立 release keystore(MPVPPLAYER_RELEASE_* 来自 app/keystore.properties,gitignored)。
+  // debug variant 继续用 ~/.android/debug.keystore(AGP 自动配)。
+  signingConfigs {
+    if (keystoreProperties.getProperty("MPVPLAYER_RELEASE_STORE_FILE") != null) {
+      create("release") {
+        storeFile = file(keystoreProperties.getProperty("MPVPLAYER_RELEASE_STORE_FILE"))
+        storePassword = keystoreProperties.getProperty("MPVPLAYER_RELEASE_STORE_PASSWORD")
+        keyAlias = keystoreProperties.getProperty("MPVPLAYER_RELEASE_KEY_ALIAS")
+        keyPassword = keystoreProperties.getProperty("MPVPLAYER_RELEASE_KEY_PASSWORD")
+      }
+    }
+  }
+
   buildTypes {
     named("release") {
       isMinifyEnabled = true
@@ -48,14 +69,20 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro",
       )
-      // W31.14 release signing: 个人 fork 用 debug keystore 签 release(同样 cn=Android Debug),
-      // 真要分发再生成独立 keystore 替换。debug.keystore 在 ~/.android/ 默认路径。
-      signingConfig = signingConfigs.getByName("debug")
+      signingConfig = if (keystoreProperties.getProperty("MPVPLAYER_RELEASE_STORE_FILE") != null) {
+        signingConfigs.getByName("release")
+      } else {
+        signingConfigs.getByName("debug")
+      }
     }
     create("preview") {
       initWith(getByName("release"))
 
-      signingConfig = signingConfigs["debug"]
+      signingConfig = if (keystoreProperties.getProperty("MPVPLAYER_RELEASE_STORE_FILE") != null) {
+        signingConfigs.getByName("release")
+      } else {
+        signingConfigs["debug"]
+      }
       applicationIdSuffix = ".preview"
       versionNameSuffix = "-${getCommitCount()}"
     }
