@@ -202,6 +202,21 @@ object HomeScreen : Screen, KoinComponent {
             ActivityResultContracts.OpenDocumentTree(),
           ) {
             if (it == null) return@rememberLauncherForActivityResult
+            // W31.22: OpenDocumentTree 返回的 treeUri 默认带临时 grant(跟 Activity 走),
+            // 重启 app / 系统 LRU 清理后 grant 失效 → 子文件 content URI 也跟着失效 →
+            // 历史记录点开 isPlayable 失败 → "File no longer accessible" → 删条目。
+            // 必须 take 持久权限,所有 child URI 跟着 tree grant 一起持久化。
+            // W31.23: 必须 READ|WRITE 双 flag(部分 ROM DocumentsUI 不接受只 READ),
+            // catch 改 Exception 防止 IllegalArgumentException 等被吞,
+            // 成功也打 Log.i 便于 dumpsys content 之外的现场确认。
+            try {
+              val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+              context.contentResolver.takePersistableUriPermission(it, flags)
+              android.util.Log.i("HomeScreen", "W31.23 takePersistableUriPermission OK tree=$it flags=$flags")
+            } catch (e: Exception) {
+              android.util.Log.w("HomeScreen", "W31.23 takePersistableUriPermission FAILED tree=$it: ${e.javaClass.simpleName}: ${e.message}")
+            }
             backstack.add(FilePickerScreen(fileManager.fromUri(it)!!.getFullPath()))
           }
           OutlinedButton(onClick = { directoryPicker.launch(null) }) {

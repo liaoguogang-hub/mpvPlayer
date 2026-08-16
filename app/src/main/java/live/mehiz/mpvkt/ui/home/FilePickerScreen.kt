@@ -95,6 +95,19 @@ data class FilePickerScreen(val uri: String) : Screen {
         directory = fileManager.fromUri(uri.toUri())!!,
         onNavigate = { newFile ->
           if (fileManager.isFile(newFile)) {
+            // W31.22: 防御性兜底 — tree grant 已 take 持久(take 在 HomeScreen directoryPicker
+            // 回调里),但若 provider / 系统偶发回收 tree grant(用户手动撤销 / 极端低存储场景),
+            // 单文件独立 grant 仍能让历史条目继续可访问。take 对 tree 派生的 child URI 可能
+            // 抛 SecurityException(provider 不允许单独持久化 child),吞掉不影响主流程。
+            runCatching {
+              val childUri = android.net.Uri.parse(newFile.getFullPath())
+              if (childUri.scheme == "content") {
+                val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(childUri, flags)
+              }
+            }.onFailure { e ->
+              android.util.Log.d("FilePickerScreen", "W31.22 take child persistable skipped: ${e.message}")
+            }
             if (subtitlesPreferences.autoLoadExternal.get()) {
               val videoNameWithoutExt = fileManager.getName(newFile).substringBeforeLast(".")
               val parentDir = fileManager.fromUri(uri.toUri())!!
