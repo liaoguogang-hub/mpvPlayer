@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
@@ -248,11 +249,16 @@ object HomeScreen : Screen, KoinComponent {
             }
             playFile(it.toString(), context)
           }
-          TextButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
-            Text(
-              text = stringResource(R.string.home_open_saf_picker),
-              style = MaterialTheme.typography.labelMedium,
-            )
+          // W31.27:SAF document picker 提升为主入口(原 v0.2.4-8 风格)。FilePickerScreen
+          // 仍保留作为内置浏览,SAF 走系统 DocumentsUI / Files 跨 app 共享。
+          OutlinedButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Icon(Icons.Default.FileOpen, null)
+              Text(text = stringResource(R.string.home_pick_file))
+            }
           }
           // W31:SMB 局域网视频入口
           OutlinedButton(onClick = { showSmb = true }) {
