@@ -9,10 +9,12 @@ import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.ProgressListener
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.common.SMBRuntimeException
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -21,7 +23,7 @@ import java.util.EnumSet
 
 /// W31 SMB 局域网视频播放客户端。
 ///
-/// 基于 smbj 0.13 (纯 Java SMB1/2/3 client,无 JNI)。
+/// 基于 smbj 0.14 (W31.26 升级自 0.13,纯 Java SMB1/2/3 client,无 JNI)。
 ///
 /// 用法:
 ///   1. 用户配 SMB server / share / 账密 (W31SmbServerPreferences)
@@ -38,14 +40,10 @@ import java.util.EnumSet
 ///   - 单一 server 配置
 ///
 /// W31.25:phase 1 + phase 2 跨同一个 share + smbFile 复用,不再 close→reconnectShare。
-/// 原 W31.7 设计在 phase 1 立即 close → phase 2 后台 reconnectShare,在远程 QNAP NAS
-/// (高延迟 + tree connect 池管理)上撞 smbj 0.13 "DiskShare has already been closed"
-/// 状态机 bug,典型场景:
-///   - 局域网 NAS(192.168.x.x):症状轻,smbj 内部 socket 还热,reconnect OK
-///   - 远程 NAS(公网 IP + DDNS):症状明显,QNAP 端 idle 超时短 + smbj 内部 TreeConnect
-///     状态机,phase 2 reconnectShare 触发 IllegalStateException
-/// 修法:AtomicBoolean closeGuard 保证 share + smbFile 只 close 一次,无论 phase 1/2
-/// 完成还是异常。
+///
+/// W31.26:phase 1 自身仍可能抛 DiskShare closed / Transport EOF(网络抖动或 QNAP 端
+/// idle timeout 关 share),外层加 retry:每次失败重建 share + 重新 openFile + 重新读
+/// 32MB,指数 backoff 500/1000/1500ms,3 次都失败才放弃。
 class W31SmbClient(
   private val server: String,
   private val port: Int = 445,
@@ -102,7 +100,7 @@ class W31SmbClient(
     }
   }
 
-  /// W31.7 边下边播 + W31.9 moov-at-end MP4 fallback + W31.25 share 跨阶段复用:
+  /// W31.7 边下边播 + W31.9 moov-at-end MP4 fallback + W31.25 share 跨阶段复用 + W31.26 retry:
   ///
   ///   1. phase 1: 下前 [prebufferBytes] (默认 32MB) 到目标文件。
   ///   2. 扫一下文件前 256KB 判断是否是「moov 在末尾」的 MP4 — 这种格式 mpv
@@ -115,10 +113,10 @@ class W31SmbClient(
   /// 调用方不管哪种情形都只需要在 [onReadyToPlay] 里启动 mpv + 关 SMB UI。
   ///
   /// W31.25:phase 1 + phase 2 跨**同一个 share + smbFile** 完成,不在 phase 1 结束
-  /// 时 close。原 W31.7 设计在 phase 1 立即 close → phase 2 后台 reconnectShare,
-  /// 在远程 QNAP NAS(高延迟 + tree connect 池管理)上会撞 smbj "DiskShare has
-  /// already been closed" 状态机 bug。共享 share 跨阶段 + AtomicBoolean close
-  /// guard 保证只 close 一次,后台 phase 2 跑完或抛错都会 cleanup。
+  /// 时 close。
+  ///
+  /// W31.26:phase 1 失败如果异常是 SMBRuntimeException(DiskShare closed 等)/ Transport
+  /// EOF,自动重建 share + 重新 openFile + 重新读 32MB,指数 backoff。3 次都失败才抛。
   suspend fun downloadForStreaming(
     shareName: String,
     remotePath: String,
@@ -129,69 +127,97 @@ class W31SmbClient(
   ): Result<File> = withContext(Dispatchers.IO) {
     runCatching {
       open().getOrThrow()
-      val share = share(shareName)
-      // W31.25:smbFile/share 跨 phase 1 + phase 2 复用,后台路径接管 close 权。
-      val smbFileHolder = arrayOfNulls<com.hierynomus.smbj.share.File>(1)
-      val closeGuard = java.util.concurrent.atomic.AtomicBoolean(false)
-      fun closeAllOnce() {
-        if (closeGuard.compareAndSet(false, true)) {
-          runCatching { smbFileHolder[0]?.close() }
-          runCatching { share.close() }
-        }
-      }
-      try {
-        val smbFile = share.openFile(
-          remotePath,
-          EnumSet.of(AccessMask.GENERIC_READ),
-          EnumSet.noneOf(FileAttributes::class.java),
-          SMB2_SHARE_ACCESS_READ,
-          SMB2CreateDisposition.FILE_OPEN,
-          EnumSet.noneOf(SMB2CreateOptions::class.java),
-        )
-        smbFileHolder[0] = smbFile
-        val total = share.getFileInformation(remotePath).standardInformation.endOfFile
-        val target = cacheFile(cacheRootDir, shareName, remotePath)
-        target.parentFile?.mkdirs()
-        val buf = ByteArray(READ_CHUNK_SIZE)
-        val lastEmitRef = java.util.concurrent.atomic.AtomicLong(0L)
-        val prebufferActual = minOf(prebufferBytes, total)
-        // phase 1:同步读前 32MB(共享 share + smbFile,不 close)
-        val prebuffered = readRangeInto(smbFile, buf, target, append = false, 0L, prebufferActual, total, lastEmitRef, onProgress)
-        if (prebuffered >= total) {
-          // 文件 <= 32MB,同步读完,正常 cleanup
-          onProgress?.invoke(total, total)
-          closeAllOnce()
-          onReadyToPlay(target)
-          target
-        } else if (isMoovAtEndMp4(target)) {
-          // moov-at-end MP4:同步读完整个文件再开播,避免 mpv 扫 phase 2 正在 append
-          // 的尾部失败导致黑屏。
-          readRangeInto(smbFile, buf, target, append = true, prebuffered, total - prebuffered, total, lastEmitRef, onProgress)
-          onProgress?.invoke(total, total)
-          closeAllOnce()
-          onReadyToPlay(target)
-          target
-        } else {
-          // faststart MP4 / MKV / AVI / 其它:phase 2 挂后台,share + smbFile 接管给
-          // W31SmbDownloadScope,跑完或抛错才 close。
-          W31SmbDownloadScope.launch {
-            try {
-              readRangeInto(smbFile, buf, target, append = true, prebuffered, total - prebuffered, total, lastEmitRef, onProgress)
-              onProgress?.invoke(total, total)
-            } catch (_: Throwable) {
-              // 后台续传失败是 best-effort,UI 已 dismiss 不必打扰用户
-            } finally {
-              closeAllOnce()
-            }
+      var attempt = 0
+      var lastError: Throwable? = null
+      while (attempt < MAX_RECONNECT_ATTEMPTS) {
+        attempt++
+        // W31.26:每次 retry 都重新 connectShare(可能 connectShare 也被 server 关了)
+        val share = share(shareName)
+        val smbFileHolder = arrayOfNulls<com.hierynomus.smbj.share.File>(1)
+        val closeGuard = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun closeAllOnce() {
+          if (closeGuard.compareAndSet(false, true)) {
+            runCatching { smbFileHolder[0]?.close() }
+            runCatching { share.close() }
           }
-          onReadyToPlay(target)
-          target
         }
-      } catch (t: Throwable) {
-        closeAllOnce()
-        throw t
+        try {
+          val smbFile = share.openFile(
+            remotePath,
+            EnumSet.of(AccessMask.GENERIC_READ),
+            EnumSet.noneOf(FileAttributes::class.java),
+            SMB2_SHARE_ACCESS_READ,
+            SMB2CreateDisposition.FILE_OPEN,
+            EnumSet.noneOf(SMB2CreateOptions::class.java),
+          )
+          smbFileHolder[0] = smbFile
+          val total = share.getFileInformation(remotePath).standardInformation.endOfFile
+          val target = cacheFile(cacheRootDir, shareName, remotePath)
+          target.parentFile?.mkdirs()
+          val buf = ByteArray(READ_CHUNK_SIZE)
+          val lastEmitRef = java.util.concurrent.atomic.AtomicLong(0L)
+          val prebufferActual = minOf(prebufferBytes, total)
+          val prebuffered = readRangeInto(smbFile, buf, target, append = false, 0L, prebufferActual, total, lastEmitRef, onProgress)
+          // phase 1 成功,根据文件大小 / moov 位置分 3 路
+          if (prebuffered >= total) {
+            onProgress?.invoke(total, total)
+            closeAllOnce()
+            onReadyToPlay(target)
+            return@runCatching target
+          } else if (isMoovAtEndMp4(target)) {
+            readRangeInto(smbFile, buf, target, append = true, prebuffered, total - prebuffered, total, lastEmitRef, onProgress)
+            onProgress?.invoke(total, total)
+            closeAllOnce()
+            onReadyToPlay(target)
+            return@runCatching target
+          } else {
+            // faststart:phase 2 挂后台,share + smbFile 接管给 W31SmbDownloadScope
+            W31SmbDownloadScope.launch {
+              try {
+                readRangeInto(smbFile, buf, target, append = true, prebuffered, total - prebuffered, total, lastEmitRef, onProgress)
+                onProgress?.invoke(total, total)
+              } catch (_: Throwable) {
+                // 后台续传失败是 best-effort
+              } finally {
+                closeAllOnce()
+              }
+            }
+            onReadyToPlay(target)
+            return@runCatching target
+          }
+        } catch (e: SMBRuntimeException) {
+          closeAllOnce()
+          lastError = e
+          if (attempt < MAX_RECONNECT_ATTEMPTS && isRetryableSmbError(e)) {
+            delay(RETRY_DELAY_MS * attempt)
+            continue
+          }
+          throw e
+        } catch (e: com.hierynomus.protocol.transport.TransportException) {
+          closeAllOnce()
+          lastError = e
+          if (attempt < MAX_RECONNECT_ATTEMPTS) {
+            delay(RETRY_DELAY_MS * attempt)
+            continue
+          }
+          throw e
+        } catch (t: Throwable) {
+          closeAllOnce()
+          throw t
+        }
       }
+      throw lastError ?: IllegalStateException("W31SmbClient: retry exhausted without lastError")
     }
+  }
+
+  /// W31.26:判断 SMB 异常是否可重试(share / pipe closed / transport 异常)。
+  /// 网络抖动 / QNAP 端 idle timeout 关 share 是典型场景。
+  private fun isRetryableSmbError(e: Throwable): Boolean {
+    val msg = e.message ?: ""
+    return msg.contains("has already been closed", ignoreCase = true) ||
+      msg.contains("transport", ignoreCase = true) ||
+      msg.contains("EOF", ignoreCase = true) ||
+      msg.contains("connection reset", ignoreCase = true)
   }
 
   /// 扫文件前 256KB,判断是否是「moov 在文件末尾」的 MP4。
@@ -306,5 +332,12 @@ class W31SmbClient(
 
     /// SMB 单次读块大小。256KB 是 smbj 文档建议值,在千兆局域网下能打满带宽。
     private const val READ_CHUNK_SIZE: Int = 256 * 1024
+
+    /// W31.26:phase 1 retry 最大次数(每次都重建 share + openFile + 重读)。
+    /// 远程 NAS 网络抖动频繁,3 次够覆盖 99% 场景,再多用户体验不到反而拖慢首开。
+    private const val MAX_RECONNECT_ATTEMPTS: Int = 3
+
+    /// W31.26:retry 基础延迟(指数 backoff:500 / 1000 / 1500 ms)。
+    private const val RETRY_DELAY_MS: Long = 500L
   }
 }
