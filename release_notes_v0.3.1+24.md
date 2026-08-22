@@ -39,11 +39,17 @@
 **老的失效条目无法救回**(W31.23 之前的 take 没成功,grant 早被系统回收)。这些条目会按 W31.18 的逻辑
 继续"点开就 fail → 删条目",用户可手动长按删除。
 
-## 下载
+## 下载(独立 keystore 签名,非 debug)
 
-- `app-arm64-v8a-release.apk`(推荐,52 MB)
-- `app-universal-release.apk`(全架构,101 MB)
-- SHA256 见 GitHub release 页面
+| APK | 大小 | SHA256 |
+|-----|------|--------|
+| `app-arm64-v8a-release.apk` | 24.5 MB | `aa23769184cdd8b0c2bfacd88c79fb243edf1223e95a473518b28d89ca4f4584` |
+| `app-armeabi-v7a-release.apk` | 23.7 MB | `3231e1afe1e797d0ed14e33195756c1af7e8a68cb51a86d2f41757c1e2928a6a` |
+| `app-x86-release.apk` | 24.9 MB | `f0f2a5037da3eeb233d3ca2b0cfc1d1b7d78675a9e0ab0b4b33acf7de477d0ca` |
+| `app-x86_64-release.apk` | 25.8 MB | `439606827172fd447c8fc2a73f766c926e9e3461b06239edf58bc5f4f5e62e4d` |
+| `app-universal-release.apk` | 69.8 MB | `2654e6ff002474c2eff5ddd46438391833063cb069d360248c8cf6832942b5e7` |
+
+推荐 arm64-v8a(主流手机 90%+ 都是 arm64),模拟器选 x86_64。
 
 ## 致谢
 

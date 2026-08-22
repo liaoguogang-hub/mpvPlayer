@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -86,6 +87,10 @@ object HomeScreen : Screen, KoinComponent {
     val backstack = LocalBackStack.current
     val historyRepository: PlaybackHistoryRepository = koinInject()
     val history by produceHistory(historyRepository)
+    // W31.24: SMB 浏览器是 Box 全屏 overlay (不能放进 verticalScroll Column,会触发
+    // LazyColumn 被测到 infinity maxHeight → IllegalStateException)。
+    // state 提到 Content() 顶部,Box/Column 同级访问同一份 remember。
+    var showSmb by remember { mutableStateOf(false) }
 
     Scaffold(
       topBar = {
@@ -105,14 +110,14 @@ object HomeScreen : Screen, KoinComponent {
         )
       },
     ) { padding ->
-      Column(
-        modifier = Modifier
-          .fillMaxSize()
-          .padding(padding)
-          .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top,
-      ) {
+      Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(
+          modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Top,
+        ) {
         // W31.15: 最近播放 section,只在有数据时渲染
         if (history.isNotEmpty()) {
           Column(
@@ -165,7 +170,6 @@ object HomeScreen : Screen, KoinComponent {
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
         ) {
-          var showSmb by remember { mutableStateOf(false) }
           val uri = rememberTextFieldState()
           var isUrlValid by remember { mutableStateOf(true) }
           LaunchedEffect(uri.text) {
@@ -260,25 +264,26 @@ object HomeScreen : Screen, KoinComponent {
               Text(text = "SMB 局域网")
             }
           }
-          if (showSmb) {
-            androidx.compose.runtime.key(Unit) {
-              androidx.compose.material3.Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = androidx.compose.ui.graphics.Color.Black,
-              ) {
-                W31SmbBrowserScreen(
-                  onDismiss = { showSmb = false },
-                  onPlayFile = { file ->
-                    playFile(file.absolutePath, context)
-                  },
-                )
-              }
-            }
+        }
+      }
+      if (showSmb) {
+        androidx.compose.runtime.key(Unit) {
+          androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = androidx.compose.ui.graphics.Color.Black,
+          ) {
+            W31SmbBrowserScreen(
+              onDismiss = { showSmb = false },
+              onPlayFile = { file ->
+                playFile(file.absolutePath, context)
+              },
+            )
           }
         }
       }
     }
   }
+}
 
   @OptIn(ExperimentalFoundationApi::class)
   @Composable
