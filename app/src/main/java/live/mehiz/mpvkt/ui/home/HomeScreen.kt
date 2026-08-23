@@ -70,6 +70,7 @@ import live.mehiz.mpvkt.ui.history.HistoryScreen
 import live.mehiz.mpvkt.ui.player.PlayerActivity
 import live.mehiz.mpvkt.ui.player.isPlayable
 import live.mehiz.mpvkt.ui.preferences.PreferencesScreen
+import live.mehiz.mpvkt.ui.smb.W31SmbBrowserScreen
 import live.mehiz.mpvkt.ui.theme.spacing
 import live.mehiz.mpvkt.ui.utils.LocalBackStack
 import org.koin.compose.koinInject
@@ -87,7 +88,10 @@ object HomeScreen : Screen, KoinComponent {
     val backstack = LocalBackStack.current
     val historyRepository: PlaybackHistoryRepository = koinInject()
     val history by produceHistory(historyRepository)
-    // W31.28:删 showSmb state,smb 入口移除(NAS 由 Android 系统 mount + SAF picker + mpv 流式)
+    // W31.24: SMB 浏览器是 Box 全屏 overlay (不能放进 verticalScroll Column,会触发
+    // LazyColumn 被测到 infinity maxHeight → IllegalStateException)。
+    // state 提到 Content() 顶部,Box/Column 同级访问同一份 remember。
+    var showSmb by remember { mutableStateOf(false) }
 
     Scaffold(
       topBar = {
@@ -255,6 +259,31 @@ object HomeScreen : Screen, KoinComponent {
               Icon(Icons.Default.FileOpen, null)
               Text(text = stringResource(R.string.home_pick_file))
             }
+          }
+          // W31:SMB 局域网视频入口
+          OutlinedButton(onClick = { showSmb = true }) {
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Icon(Icons.Default.Storage, null)
+              Text(text = "SMB 局域网")
+            }
+          }
+        }
+      }
+      if (showSmb) {
+        androidx.compose.runtime.key(Unit) {
+          androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = androidx.compose.ui.graphics.Color.Black,
+          ) {
+            W31SmbBrowserScreen(
+              onDismiss = { showSmb = false },
+              onPlayFile = { file ->
+                playFile(file.absolutePath, context)
+              },
+            )
           }
         }
       }

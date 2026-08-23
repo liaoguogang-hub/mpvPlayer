@@ -60,9 +60,10 @@ fsaf = { module = "com.github.K1rakishou:Fuck-Storage-Access-Framework", version
 junrar = { module = "com.github.junrar:junrar", version = "7.5.5" }
 commons-compress = { module = "org.apache.commons:commons-compress", version = "1.26.2" }
 
-# W31.28:删 smbj 依赖。回到 v0.2.4-8 风格 — NAS 文件由 Android 系统 / 第三方 mount app
-# 挂载到本地,SAF picker 直接选 → mpv 通过 ContentResolver 流式读(mpv 内置
-# demuxer-cache 边下边播)。不再自建 smbj 客户端。
+# W31:SMB 局域网视频播放。smbj 是纯 Java SMB client (SMB1/2/3),无 JNI。
+# W31.26:0.13.0 → 0.14.0 升级。0.14 修复了一些 SMB2 TreeConnect + Transport 重试相关 bug
+# (具体 changelog 官方仓库 master/CHANGELOG.md,2024-12-09 发布)。
+smbj = { module = "com.hierynomus:smbj", version = "0.14.0" }
 
 about-libs-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "about-libs" }
 about-libs-ui-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "about-libs" }
