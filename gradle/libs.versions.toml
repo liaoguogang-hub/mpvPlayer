@@ -72,6 +72,15 @@ commons-compress = { module = "org.apache.commons:commons-compress", version = "
 # jcifs-ng API 比 smbj 简洁(SmbFile + inputStream),跨平台稳定。
 jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version = "2.1.9" }
 
+# W31.32:jcifs-ng NTLM 认证内部用 MessageDigest.getInstance("MD4", "BC") 算 NTLMv1
+# hash(MD4(password.utf16le))。Android 从 API 28 起把内置 com.android.org.bouncycastle
+# 阉割(去 MD2/MD4/RIPEMD160 等 legacy 算法,理由是不安全)。所以 Security.getProvider("BC")
+# 拿到的 BC provider 是没有 MD4 的,jcifs-ng 第一次 NTLM 握手就 NoSuchAlgorithmException。
+# 修法:加 bcprov-jdk18on 全量 jar(支持 Java 8 / Android API 23+),App.onCreate 里
+# Security.removeProvider("BC") 移除阉割版再 Security.addProvider(BouncyCastleProvider())
+# 注册完整版。
+bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.78.1" }
+
 about-libs-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "about-libs" }
 about-libs-ui-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "about-libs" }
 simple-icons = { module = "br.com.devsrsouza.compose.icons:simple-icons", version = "1.1.1" }

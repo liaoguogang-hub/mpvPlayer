@@ -29,8 +29,8 @@ android {
     applicationId = "live.mehiz.mpvkt"
     minSdk = 23
     targetSdk = 36
-    versionCode = 32
-    versionName = "0.3.9"
+    versionCode = 33
+    versionName = "0.3.10"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -188,7 +188,13 @@ dependencies {
   implementation(libs.fsaf)
 
   // W31.31:换 SMB 客户端 smbj → jcifs-ng(eu.agno3.jcifs:jcifs-ng:2.1.9,Java SMB client)
-  implementation(libs.jcifs.ng)
+  implementation(libs.jcifs.ng) {
+    // W31.32:jcifs-ng 2.1.9 自带 bcprov-jdk15on:1.69(老版本,我们用 jdk18on:1.78.1 全量 jar
+    // 才能让 App.onCreate 覆盖 Android 内置 strip 过的 BC + 提供 MD4)。exclude 掉冲突版本。
+    exclude(group = "org.bouncycastle")
+  }
+  // W31.32:jcifs-ng NTLM 需要 MD4,Android 内置 BC 没 MD4,加全量 BC 覆盖。
+  implementation(libs.bcprov)
 }
 
 detekt {

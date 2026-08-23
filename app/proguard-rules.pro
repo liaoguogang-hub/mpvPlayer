@@ -34,3 +34,12 @@
 # W31.31:jcifs-ng 也用 SLF4J runtime,需要 -dontwarn 跳过 logger binding
 -dontwarn org.slf4j.impl.StaticLoggerBinder
 -dontwarn org.slf4j.impl.**
+
+# W31.32:BouncyCastle 全量 jar(R8 minify 跑通不压动 jcifs-ng 的 MD4 调用,但 keep 一份
+# 避免 BC 内部类被改名导致 jcifs-ng 通过反射查找失败)。BC 本身 ~3MB,jcifs-ng 反正
+# 至少要 BC 不可裁。
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
+# jcifs-ng 通过 java.security.Security.getInstance("MessageDigest", "MD4", "BC") 反射拿,
+# 算法字符串常量化,需要保留 BC provider 类全名
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
