@@ -44,14 +44,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/// W31.7 SMB prebuffer 字节数(默认 32MB)。与 W31SmbClient.DEFAULT_PREBUFFER_BYTES 对齐。
-private const val SMB_PREBUFFER_BYTES: Long = 32L * 1024 * 1024
-
 /// W31 SMB 浏览器:列出 share 内的目录/视频文件,点击后用 [onPlayFile] 播本地 cache。
 ///
-/// W31.7 边下边播:
-///   - 点击文件 → 下 32MB prebuffer → 立即开播 (mpv 拿 cache File 当 file://)
-///   - 剩余字节在 W31SmbDownloadScope 后台续传到同一文件,mpv 边播边读到新数据
+/// W31.29:**同步全文件下载**(回到 W31.5/W31.6 设计)
+///   - 点击文件 → 同步下载完整文件到 cacheDir/smb/ → 启动 mpv 播
+///   - 没有 phase 1+2 后台续传,远程 NAS 上不会撞 smbj DiskShare closed / 转圈
+///   - 1GB 视频 100Mbps 局域网约 80s,user 优先稳定性
 ///   - 目录浏览只一层(列表点进去再次进入子目录)
 @Composable
 fun W31SmbBrowserScreen(
@@ -198,31 +196,26 @@ fun W31SmbBrowserScreen(
                         scope.launch {
                           downloadBytes = 0L
                           downloadTotal = 0L
-                          // W31.7+W31.9 边下边播 + moov-at-end 兜底:
-                          //   - faststart MP4 / MKV / AVI / 其它: phase 1 (32MB) 后立即开播,
-                          //     phase 2 在 W31SmbDownloadScope 后台 append 剩余字节。
-                          //   - moov-at-end MP4 (常见于手机拍摄): 同步下完整个文件再开播,
-                          //     避免 mpv 扫被 phase 2 正在 append 的尾部失败导致黑屏。
-                          val r = client!!.downloadForStreaming(
+                          // W31.29:同步全下载。回到 W31.5/W31.6 设计,删 W31.7 phase 1+phase 2。
+                          // smbj 0.13 + 同步全下载 + SocketFactory connect timeout 5s
+                          // → 远程 NAS 稳定可播。
+                          val r = client!!.downloadToCache(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
-                            prebufferBytes = SMB_PREBUFFER_BYTES,
-                            onReadyToPlay = { file ->
-                              downloading = null
-                              // onReadyToPlay 在 IO 线程触发,startActivity 必须主线程
-                              scope.launch(Dispatchers.Main) {
-                                onPlayFile(file)
-                                onDismiss()
-                              }
-                            },
                             onProgress = { read, total ->
                               downloadBytes = read
                               downloadTotal = total
                               if (total > 0) downloadProgress = read.toFloat() / total
                             },
                           )
-                          r.onFailure { e ->
+                          r.onSuccess { file ->
+                            downloading = null
+                            scope.launch(Dispatchers.Main) {
+                              onPlayFile(file)
+                              onDismiss()
+                            }
+                          }.onFailure { e ->
                             downloading = null
                             error = "下载失败: ${e.message ?: e.javaClass.simpleName}"
                           }
