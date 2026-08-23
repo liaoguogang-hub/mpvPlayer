@@ -126,28 +126,23 @@ class W31SmbClient(
     }
   }
 
-  /// W31.34:边下边播。phase 1 同步下前 [prebufferBytes] (默认 32MB) 到 cache,完成后立即调
-  /// [onPrebufferReady] 让 UI 启动 mpv;phase 2 在 [W31SmbDownloadScope] 应用级 scope 后台
-  /// append 剩余字节到同一文件,mpv 边播边读到新追加的数据。
+  /// W31.34 + W31.38:边下边播 + moov-at-end MP4 兜底。
   ///
-  /// 实现细节(对比 W31.7 smbj 版):
-  ///   - phase 1 / phase 2 各自独立 open `SmbFile` + `SmbFileInputStream` + close
-  ///     (不复用,避免 W31.25 撞的 smbj share 复用 TreeConnect 状态机 bug)
-  ///   - phase 2 用 `input.skip(downloaded)` 让 jcifs-ng 走 SMB2 Read with Offset,
-  ///     不浪费带宽地跳过 phase 1 已下载部分
-  ///   - phase 2 用 `FileOutputStream(target, append=true)` append 到同一文件
+  ///   1. phase 1: 下前 [prebufferBytes] (默认 32MB) 到目标文件。
+  ///   2. 扫文件前 256KB 判断是否是「moov 在末尾」的 MP4(W31.9 移植)—
+  ///      这种格式 mpv 需要扫到文件尾部才能找 moov atom,边下边播会让
+  ///      mpv 扫到正在被 phase 2 append 的尾部而解不出来,导致 duration=0 或黑屏。
+  ///   3a. faststart MP4 / MKV / AVI / 其它 → 立刻回调 [onReadyToPlay],
+  ///       剩余字节挂到 [W31SmbDownloadScope] 后台 fire-and-forget append。
+  ///   3b. moov-at-end MP4 → 同步下完整个文件,再回调 [onReadyToPlay]。
   ///
-  /// 限制(跟 W31.7 同):
-  ///   - faststart MP4 / MKV / AVI:32MB prebuffer 后立即可播
-  ///   - moov-at-end MP4:需要完整文件才能识别,prebufferReady 后 mpv 会报格式错误,
-  ///     等 phase 2 完成后重试(W31.36 再加自动检测)
-  ///   - mpv seek 到未下载区域:等到 phase 2 追上(prebuffer 32MB ≈ 1080p 26s 缓冲)
+  /// 调用方不管哪种情形都只需要在 [onReadyToPlay] 里启动 mpv + 关 SMB UI。
   suspend fun downloadForStreaming(
     shareName: String,
     remotePath: String,
     cacheRootDir: File,
     prebufferBytes: Long = DEFAULT_PREBUFFER_BYTES,
-    onPrebufferReady: (target: File, prebuffered: Long, total: Long) -> Unit,
+    onReadyToPlay: (target: File, totalBytes: Long) -> Unit,
     onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null,
   ): Result<File> = withContext(Dispatchers.IO) {
     runCatching {
@@ -155,10 +150,10 @@ class W31SmbClient(
       val target = cacheFile(cacheRootDir, shareName, remotePath)
       target.parentFile?.mkdirs()
 
-      // phase 1: 同步下前 prebufferBytes(或 total,如果 total 更小)
+      // phase 1: 同步下前 prebufferBytes(或 total)
       val lastEmitRef = AtomicLong(0L)
-      val prebuffered: Long
       val total: Long
+      val prebuffered: Long
       SmbFile(url).use { smbFile ->
         total = smbFile.length()
         val prebufferTarget = minOf(prebufferBytes, total)
@@ -173,31 +168,76 @@ class W31SmbClient(
           progressBase = 0L,
         )
       }
-      // phase 1 写完,flush + 通知 UI 启动 mpv
-      onPrebufferReady(target, prebuffered, total)
 
-      // phase 2: 应用级 scope 后台续传剩余字节(独立 open)
       if (prebuffered < total) {
-        val phase2Job = W31SmbDownloadScope.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-          try {
-            downloadRestOnly(
-              url = url,
-              target = target,
-              fromOffset = prebuffered,
-              total = total,
-              lastEmitRef = lastEmitRef,
-              onProgress = onProgress,
-            )
-            onProgress?.invoke(total, total)
-          } catch (e: Throwable) {
-            // 后台续传失败 best-effort,UI 已 dismiss 不必打扰用户
-            android.util.Log.w("W31SmbClient", "phase 2 failed for $remotePath: ${e.message}", e)
+        if (isMoovAtEndMp4(target)) {
+          // W31.38: moov-at-end MP4 → 同步下完整个文件再开播,避免 mpv 扫
+          // 被 phase 2 正在 append 的尾部失败导致 duration=0 / 黑屏。
+          downloadRestOnly(
+            url = url,
+            target = target,
+            fromOffset = prebuffered,
+            total = total,
+            lastEmitRef = lastEmitRef,
+            onProgress = onProgress,
+          )
+          onProgress?.invoke(total, total)
+        } else {
+          // faststart MP4 / MKV / AVI / 其它 → 立即开播,phase 2 后台续传
+          val phase2Job = W31SmbDownloadScope.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+              downloadRestOnly(
+                url = url,
+                target = target,
+                fromOffset = prebuffered,
+                total = total,
+                lastEmitRef = lastEmitRef,
+                onProgress = onProgress,
+              )
+              onProgress?.invoke(total, total)
+            } catch (e: Throwable) {
+              android.util.Log.w("W31SmbClient", "phase 2 failed for $remotePath: ${e.message}", e)
+            }
           }
+          W31SmbDownloadScope.track(remotePath, phase2Job)
         }
-        W31SmbDownloadScope.track(remotePath, phase2Job)
       }
+      onReadyToPlay(target, total)
       target
     }
+  }
+
+  /// W31.38(W31.9 移植):扫文件前 256KB 判断是否是「moov 在文件末尾」的 MP4。
+  ///
+  /// MP4 = 一系列 box,每个 box 头 4 字节 size + 4 字节 tag。
+  ///   - bytes 4-7 = "ftyp" 标识是 MP4。
+  ///   - 顶层 box 里有 "moov" tag → faststart(moov 在文件头)。
+  ///   - 256KB 内走完所有顶层 box 都没 "moov" → moov 在文件末尾。
+  ///
+  /// 权衡:理论上「moov 恰好在 256KB ~ 几 MB 之间」会误判为 moov-at-end,
+  /// 代价只是多等几秒全量下载,可接受。
+  private fun isMoovAtEndMp4(file: File): Boolean {
+    if (!file.exists() || file.length() < 16) return false
+    val buf = ByteArray(256 * 1024)
+    val n = file.inputStream().use { it.read(buf) }
+    if (n < 16) return false
+    // MP4: bytes 4-7 = "ftyp"
+    val ftyp = byteArrayOf('f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
+    if (!buf.copyOfRange(4, 8).contentEquals(ftyp)) return false
+    // 走顶层 box
+    var i = 0
+    while (i + 8 <= n) {
+      val size = ((buf[i].toInt() and 0xFF) shl 24) or
+        ((buf[i + 1].toInt() and 0xFF) shl 16) or
+        ((buf[i + 2].toInt() and 0xFF) shl 8) or
+        (buf[i + 3].toInt() and 0xFF)
+      if (size == 0 || size == 1) return true
+      val tag = String(buf, i + 4, 4, Charsets.US_ASCII)
+      if (tag == "moov") return false
+      if (i + size > n || size > Int.MAX_VALUE) return true
+      i += size
+    }
+    return true
   }
 
   /// phase 2: 独立 open SmbFile,skip 到 phase 1 已下载偏移,append 剩余字节到同一文件。

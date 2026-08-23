@@ -45,12 +45,12 @@ import java.io.File
 
 /// W31 SMB 浏览器:列出 share 内的目录/视频文件,点击后用 [onPlayFile] 播本地 cache。
 ///
-/// W31.34:**边下边播**(回到 W31.7 设计,jcifs-ng 重写)
+/// W31.34 + W31.38:边下边播 + moov-at-end 兜底
 ///   - 点击文件 → W31SmbClient.downloadForStreaming
-///   - phase 1 同步下前 32MB prebuffer 到 cacheDir/smb/ → 调 onPrebufferReady → 启动 mpv
-///   - phase 2 在 [W31SmbDownloadScope] 应用级 scope 后台 append 剩余字节
-///   - mpv 边播边读到 phase 2 追加的数据,faststart MP4 / MKV / AVI 32MB 后立即可播
-///   - 限制:moov-at-end MP4 需要完整文件才能识别(W31.36 再加自动检测)
+///   - phase 1 同步下前 32MB prebuffer → 扫文件前 256KB 找 moov tag
+///     - faststart MP4 / MKV / AVI → 立即调 onReadyToPlay 启动 mpv,phase 2 后台 append
+///     - moov-at-end MP4 → 同步下完整个文件再调 onReadyToPlay
+///   - mpv 边播边读到 phase 2 追加的数据(W31.9 移植,W31.38 适配 jcifs-ng + W31.34)
 ///   - 目录浏览只一层(列表点进去再次进入子目录)
 @Composable
 fun W31SmbBrowserScreen(
@@ -197,40 +197,38 @@ fun W31SmbBrowserScreen(
                         scope.launch {
                           downloadBytes = 0L
                           downloadTotal = 0L
-                          // W31.34:边下边播。phase 1 同步下 32MB → 立即 onPrebufferReady 启动 mpv;
-                          // phase 2 在 W31SmbDownloadScope 后台续传,mpv 边播边读到追加的数据。
+                          // W31.34 + W31.38:边下边播 + moov-at-end 兜底。
+                          //   - faststart MP4 / MKV / AVI:phase 1 (32MB) 后立即开播,
+                          //     phase 2 在 W31SmbDownloadScope 后台 append。
+                          //   - moov-at-end MP4(常见手机拍视频):同步下完整个文件再开播,
+                          //     避免 mpv 扫被 phase 2 正在 append 的尾部失败导致 duration=0 / 黑屏。
                           // jcifs-ng 实现:phase 1/2 各自独立 open SmbFile,不复用,避免 W31.25
                           // 撞的 smbj share 复用 TreeConnect 状态机 bug。
-                          var prebufferFired = false
+                          var readyFired = false
                           val r = client!!.downloadForStreaming(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
-                            onPrebufferReady = { file, prebuffered, total ->
-                              downloadBytes = prebuffered
+                            onReadyToPlay = { file, total ->
+                              downloadBytes = total
                               downloadTotal = total
-                              if (total > 0) downloadProgress = prebuffered.toFloat() / total
-                              // phase 1 写完 32MB,立即启动 mpv。BrowserScreen 自己 dismiss,
-                              // phase 2 后台跑(应用级 scope 不会被 dismiss cancel)。
-                              prebufferFired = true
+                              downloadProgress = 1f
+                              // onReadyToPlay 在 IO 线程触发,startActivity 必须主线程
+                              readyFired = true
                               scope.launch(Dispatchers.Main) {
                                 onPlayFile(file)
                                 onDismiss()
                               }
                             },
-                            onProgress = { read, _ ->
-                              // phase 2 续传进度(phase 1 期间 onPrebufferReady 已经处理进度)
-                              if (prebufferFired) {
-                                downloadBytes = read
-                                // downloadTotal 已是 total,百分比 read/total
-                                if (downloadTotal > 0) downloadProgress = read.toFloat() / downloadTotal
-                              }
+                            onProgress = { read, total ->
+                              downloadBytes = read
+                              downloadTotal = total
+                              if (total > 0) downloadProgress = read.toFloat() / total
                             },
                           )
                           r.onFailure { e ->
                             downloading = null
-                            // phase 1 失败要 UI 提示(还没启动 mpv),phase 2 失败 best-effort 已吞
-                            if (!prebufferFired) {
+                            if (!readyFired) {
                               error = "下载失败: ${e.message ?: e.javaClass.simpleName}"
                             }
                           }

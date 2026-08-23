@@ -29,8 +29,8 @@ android {
     applicationId = "live.mehiz.mpvkt"
     minSdk = 23
     targetSdk = 36
-    versionCode = 37
-    versionName = "0.3.14"
+    versionCode = 38
+    versionName = "0.3.15"
 
     vectorDrawables {
       useSupportLibrary = true
