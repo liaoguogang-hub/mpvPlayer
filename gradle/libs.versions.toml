@@ -65,9 +65,12 @@ fsaf = { module = "com.github.K1rakishou:Fuck-Storage-Access-Framework", version
 junrar = { module = "com.github.junrar:junrar", version = "7.5.5" }
 commons-compress = { module = "org.apache.commons:commons-compress", version = "1.26.2" }
 
-# W31:SMB 局域网视频播放。smbj 是纯 Java SMB client (SMB1/2/3),无 JNI。
-# W31.29:回退 0.14.0 → 0.13.0(0.14 在华为新机 SMB 转圈连不上,user 验证 0.13 OK)
-smbj = { module = "com.hierynomus:smbj", version = "0.13.0" }
+# W31.31:换 SMB 客户端 — smbj 0.13 sync full 设计在远程 QNAP NAS 上仍报
+# "DiskShare has already been closed"(smbj 库内部协议层 bug)。换 jcifs-ng
+# (Apache AgNO3 fork,Java CIFS/SMB1/2/3 client)。groupId eu.agno3.jcifs,
+# 最新稳定版 2.1.9(GitHub 上 master 是 3.0.0-SNAPSHOT,但没发到 Maven Central)。
+# jcifs-ng API 比 smbj 简洁(SmbFile + inputStream),跨平台稳定。
+jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version = "2.1.9" }
 
 about-libs-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "about-libs" }
 about-libs-ui-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "about-libs" }

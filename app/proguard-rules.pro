@@ -31,3 +31,6 @@
 -dontwarn javax.el.**
 # smbj SMB Kerberos 认证(我们只用 NTLM/guest,不需要 GSS)
 -dontwarn org.ietf.jgss.**
+# W31.31:jcifs-ng 也用 SLF4J runtime,需要 -dontwarn 跳过 logger binding
+-dontwarn org.slf4j.impl.StaticLoggerBinder
+-dontwarn org.slf4j.impl.**
