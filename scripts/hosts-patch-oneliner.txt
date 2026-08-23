@@ -1,0 +1,11 @@
+复制下面这一整条,粘贴到任意 PowerShell 窗口(不需要先开 admin,UAC 会自动弹):
+
+Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile","-Command","$p = 'C:\Windows\System32\drivers\etc\hosts'; (Get-Content $p) -replace '^127\.0\.0\.1 api\.github\.com', '#127\.0\.0\.1 api\.github\.com' | Set-Content $p; Get-Content $p | Select-String 'api\.github\.com'"
+
+预期步骤:
+  1. 弹 UAC 蓝色窗口 → 点"是"
+  2. 弹一个新的 PowerShell 窗口(标题开头是"管理员:")
+  3. 那个 admin 窗口会输出剩余 api.github.com 行(应该只剩 # 开头的)
+  4. admin 窗口跑完自动关闭
+
+跑完告诉我 — 我立即 gh release create
