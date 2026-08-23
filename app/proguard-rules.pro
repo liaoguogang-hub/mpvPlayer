@@ -29,31 +29,10 @@
 -dontwarn java.lang.invoke.StringConcatFactory
 # mbassy 事件总线支持 javax.el 表达式过滤(我们用不上 EL filter)
 -dontwarn javax.el.**
-# smbj SMB Kerberos 认证(我们只用 NTLM/guest,不需要 GSS)
--dontwarn org.ietf.jgss.**
-# W31.31:jcifs-ng 也用 SLF4J runtime,需要 -dontwarn 跳过 logger binding
+# W31.36: 0.2.4-8 风格 2.0,删 smbj / jcifs-ng / BouncyCastle 全部依赖及 proguard keep。
+# SMB 视频走 Android 系统 SAF picker + system-level DocumentsProvider 透明代理,
+# mpvPlayer / mpv 完全不碰 SMB 协议层。
+
+# fsaf / Room / Koin 等用 SLF4J runtime,需要 -dontwarn 跳过 logger binding
 -dontwarn org.slf4j.impl.StaticLoggerBinder
 -dontwarn org.slf4j.impl.**
-
-# W31.32:BouncyCastle 全量 jar(R8 minify 跑通不压动 jcifs-ng 的 MD4 调用,但 keep 一份
-# 避免 BC 内部类被改名导致 jcifs-ng 通过反射查找失败)。BC 本身 ~3MB,jcifs-ng 反正
-# 至少要 BC 不可裁。
--keep class org.bouncycastle.** { *; }
--keep class org.bouncycastle.**$* { *; }
--keep interface org.bouncycastle.** { *; }
--keep interface org.bouncycastle.**$* { *; }
--keep enum org.bouncycastle.** { *; }
--keep enum org.bouncycastle.**$* { *; }
--dontwarn org.bouncycastle.**
-# jcifs-ng 通过 java.security.Security.getInstance("MessageDigest", "MD4", "BC") 反射拿,
-# 算法字符串常量化,需要保留 BC provider 类全名
--keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
-
-# W31.33:上面的 -keep class org.bouncycastle.** 只能防止被 keep 的类被改名,R8 SHRINK
-# 阶段仍会删除没被静态引用的类(jcifs-ng 通过 SPI 反射加载,引用链 R8 看不见)。需要配合
-# App.kt 里 keepBouncyCastleClasses() 静态引用(显式 Class 引用让 R8 把 ASN1/MD4/DES/RC4
-# 等 keep 住)。这里再加 jcifs-ng 自家的 SPI 入口 keep:
--keep class jcifs.** { *; }
--keep class jcifs.**$* { *; }
--keep interface jcifs.** { *; }
--dontwarn jcifs.**
