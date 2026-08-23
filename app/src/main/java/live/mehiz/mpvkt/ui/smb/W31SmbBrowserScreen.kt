@@ -2,7 +2,6 @@ package live.mehiz.mpvkt.ui.smb
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,10 +45,12 @@ import java.io.File
 
 /// W31 SMB 浏览器:列出 share 内的目录/视频文件,点击后用 [onPlayFile] 播本地 cache。
 ///
-/// W31.29:**同步全文件下载**(回到 W31.5/W31.6 设计)
-///   - 点击文件 → 同步下载完整文件到 cacheDir/smb/ → 启动 mpv 播
-///   - 没有 phase 1+2 后台续传,远程 NAS 上不会撞 smbj DiskShare closed / 转圈
-///   - 1GB 视频 100Mbps 局域网约 80s,user 优先稳定性
+/// W31.34:**边下边播**(回到 W31.7 设计,jcifs-ng 重写)
+///   - 点击文件 → W31SmbClient.downloadForStreaming
+///   - phase 1 同步下前 32MB prebuffer 到 cacheDir/smb/ → 调 onPrebufferReady → 启动 mpv
+///   - phase 2 在 [W31SmbDownloadScope] 应用级 scope 后台 append 剩余字节
+///   - mpv 边播边读到 phase 2 追加的数据,faststart MP4 / MKV / AVI 32MB 后立即可播
+///   - 限制:moov-at-end MP4 需要完整文件才能识别(W31.36 再加自动检测)
 ///   - 目录浏览只一层(列表点进去再次进入子目录)
 @Composable
 fun W31SmbBrowserScreen(
@@ -196,28 +197,42 @@ fun W31SmbBrowserScreen(
                         scope.launch {
                           downloadBytes = 0L
                           downloadTotal = 0L
-                          // W31.29:同步全下载。回到 W31.5/W31.6 设计,删 W31.7 phase 1+phase 2。
-                          // smbj 0.13 + 同步全下载 + SocketFactory connect timeout 5s
-                          // → 远程 NAS 稳定可播。
-                          val r = client!!.downloadToCache(
+                          // W31.34:边下边播。phase 1 同步下 32MB → 立即 onPrebufferReady 启动 mpv;
+                          // phase 2 在 W31SmbDownloadScope 后台续传,mpv 边播边读到追加的数据。
+                          // jcifs-ng 实现:phase 1/2 各自独立 open SmbFile,不复用,避免 W31.25
+                          // 撞的 smbj share 复用 TreeConnect 状态机 bug。
+                          var prebufferFired = false
+                          val r = client!!.downloadForStreaming(
                             shareName = prefs.share,
                             remotePath = fullPath,
                             cacheRootDir = context.cacheDir,
-                            onProgress = { read, total ->
-                              downloadBytes = read
+                            onPrebufferReady = { file, prebuffered, total ->
+                              downloadBytes = prebuffered
                               downloadTotal = total
-                              if (total > 0) downloadProgress = read.toFloat() / total
+                              if (total > 0) downloadProgress = prebuffered.toFloat() / total
+                              // phase 1 写完 32MB,立即启动 mpv。BrowserScreen 自己 dismiss,
+                              // phase 2 后台跑(应用级 scope 不会被 dismiss cancel)。
+                              prebufferFired = true
+                              scope.launch(Dispatchers.Main) {
+                                onPlayFile(file)
+                                onDismiss()
+                              }
+                            },
+                            onProgress = { read, _ ->
+                              // phase 2 续传进度(phase 1 期间 onPrebufferReady 已经处理进度)
+                              if (prebufferFired) {
+                                downloadBytes = read
+                                // downloadTotal 已是 total,百分比 read/total
+                                if (downloadTotal > 0) downloadProgress = read.toFloat() / downloadTotal
+                              }
                             },
                           )
-                          r.onSuccess { file ->
+                          r.onFailure { e ->
                             downloading = null
-                            scope.launch(Dispatchers.Main) {
-                              onPlayFile(file)
-                              onDismiss()
+                            // phase 1 失败要 UI 提示(还没启动 mpv),phase 2 失败 best-effort 已吞
+                            if (!prebufferFired) {
+                              error = "下载失败: ${e.message ?: e.javaClass.simpleName}"
                             }
-                          }.onFailure { e ->
-                            downloading = null
-                            error = "下载失败: ${e.message ?: e.javaClass.simpleName}"
                           }
                         }
                       }
