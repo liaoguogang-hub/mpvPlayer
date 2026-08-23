@@ -36,7 +36,7 @@ object PreferencesScreen : Screen {
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     Scaffold(
       topBar = {
         TopAppBar(

@@ -85,7 +85,7 @@ object HomeScreen : Screen, KoinComponent {
   @Composable
   override fun Content() {
     val context = LocalContext.current
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val historyRepository: PlaybackHistoryRepository = koinInject()
     val history by produceHistory(historyRepository)
     // W31.24: SMB 浏览器是 Box 全屏 overlay (不能放进 verticalScroll Column,会触发

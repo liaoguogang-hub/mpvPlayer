@@ -71,7 +71,7 @@ data class FilePickerScreen(val uri: String) : Screen {
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val fileManager = koinInject<FileManager>()
     val context = LocalContext.current
     val subtitlesPreferences = koinInject<SubtitlesPreferences>()
@@ -145,7 +145,7 @@ data class FilePickerScreen(val uri: String) : Screen {
     onNavigate: (AbstractFile) -> Unit,
     modifier: Modifier = Modifier,
   ) {
-    val navigator = LocalBackStack.current
+    val navigator: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val fileManager = koinInject<FileManager>()
     val fileList = fileManager.listFiles(directory).filterNot {
       !Utils.MEDIA_EXTENSIONS.contains(fileManager.getName(it).substringAfterLast('.')) &&

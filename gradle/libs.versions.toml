@@ -7,7 +7,12 @@ koin = "4.1.1"
 room = "2.7.2"
 detekt = "1.23.8"
 about-libs = "12.2.4"
-navigation3 = "1.0.0-alpha06"
+# W31.30:navigation3 1.0.0-alpha06 有 ChildLifecycleOwner 状态机 bug(v0.2.4-8 commit
+# 05b8c73 在鸿蒙新机 Activity destroy 时抛 IllegalStateException)。
+# 1.0.0 stable (2025-11-19) 起大量 bug 修复,1.1.0 stable (2026-04-08) + 1.1.1 后续 fix 完整。
+# API 跟 alpha06 兼容(同 namespace androidx.navigation3.runtime / androidx.navigation3.ui),
+# NavDisplay / rememberNavBackStack / NavEntry 等核心 API 没变。
+navigation3 = "1.1.0"
 kotlinx-serialization = "1.9.0"
 
 [libraries]

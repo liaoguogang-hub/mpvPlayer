@@ -50,7 +50,7 @@ object AboutScreen : Screen {
   override fun Content() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     Scaffold(
       topBar = {
         TopAppBar(
@@ -141,7 +141,7 @@ object LibrariesScreen : Screen {
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     Scaffold(
       topBar = {
         TopAppBar(

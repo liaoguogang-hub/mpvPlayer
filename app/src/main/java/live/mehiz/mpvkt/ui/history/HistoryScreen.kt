@@ -60,7 +60,7 @@ object HistoryScreen : Screen {
   @Composable
   override fun Content() {
     val context = LocalContext.current
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val historyRepository: PlaybackHistoryRepository = koinInject()
     val scope = rememberCoroutineScope()
     val history by produceHistory(historyRepository)

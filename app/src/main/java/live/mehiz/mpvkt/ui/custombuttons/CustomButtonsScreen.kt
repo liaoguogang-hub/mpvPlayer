@@ -20,7 +20,7 @@ import org.koin.compose.viewmodel.koinViewModel
 object CustomButtonsScreen : Screen {
   @Composable
   override fun Content() {
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val uriHandler = LocalUriHandler.current
     val viewModel = koinViewModel<CustomButtonsScreenViewModel>()
     val playerPreferences = koinInject<PlayerPreferences>()

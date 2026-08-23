@@ -22,7 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.IntOffset
+import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import live.mehiz.mpvkt.preferences.AppearancePreferences
@@ -54,12 +56,18 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   fun Navigator() {
-    val backstack = rememberNavBackStack<Screen>(HomeScreen)
+    // W31.30:navigation3 1.1.0 rememberNavBackStack 接受 NavKey 而不是泛型 vararg。
+    // 显式声明 backstack 类型 + cast HomeScreen 成 NavKey 让 1.1.0 编译过。
+    // W31.30:navigation3 1.1.0 rememberNavBackStack 返 NavBackStack<NavKey>,我们 Screen
+// implements NavKey 但 Kotlin 不能推断 → unchecked cast。HomeScreen 是 Screen 唯一一个
+// 顶层 entry,cast 安全。
+@Suppress("UNCHECKED_CAST")
+val backstack: NavBackStack<Screen> = rememberNavBackStack(HomeScreen) as NavBackStack<Screen>
     CompositionLocalProvider(LocalBackStack provides backstack) {
       NavDisplay(
         backStack = backstack,
         onBack = { backstack.removeLastOrNull() },
-        entryProvider = { route -> NavEntry(route) { (it as Screen).Content() } },
+        entryProvider = { route -> NavEntry<Screen>(route) { (it as Screen).Content() } },
         popTransitionSpec = {
           fadeIn(animationSpec = tween(220)) +
             slideIn(animationSpec = tween(220)) { IntOffset(-it.width / 2, 0) } togetherWith

@@ -44,7 +44,7 @@ object GesturePreferencesScreen : Screen {
   override fun Content() {
     val preferences = koinInject<GesturePreferences>()
     val context = LocalContext.current
-    val backstack = LocalBackStack.current
+    val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     Scaffold(
       topBar = {
         TopAppBar(
