@@ -65,10 +65,25 @@ fsaf = { module = "com.github.K1rakishou:Fuck-Storage-Access-Framework", version
 junrar = { module = "com.github.junrar:junrar", version = "7.5.5" }
 commons-compress = { module = "org.apache.commons:commons-compress", version = "1.26.2" }
 
-# W31.36: 0.2.4-8 风格 2.0 大重构,删 W31.5-W31.35 全部 SMB 自实现代码
-# (smbj / jcifs-ng / BouncyCastle / W31SmbClient 等),SMB 视频完全走 Android
-# 系统 SAF picker + system-level DocumentsProvider 透明代理。无 SMB 库依赖。
-# 保留 W31.15/W31.18/W31.20/W31.23/W31.24/W31.27/W31.30 等累积改进。
+# W31.31:换 SMB 客户端 — smbj 0.13 sync full 设计在远程 QNAP NAS 上仍报
+# "DiskShare has already been closed"(smbj 库内部协议层 bug)。换 jcifs-ng
+# (Apache AgNO3 fork,Java CIFS/SMB1/2/3 client)。groupId eu.agno3.jcifs,
+# 最新稳定版 2.1.9(GitHub 上 master 是 3.0.0-SNAPSHOT,但没发到 Maven Central)。
+# jcifs-ng API 比 smbj 简洁(SmbFile + inputStream),跨平台稳定。
+jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version = "2.1.9" }
+
+# W31.32/W31.33:jcifs-ng 2.1.9 NTLM 认证内部用 MessageDigest.getInstance("MD4", "BC")
+# 算 NTLMv1 hash(MD4(password.utf16le))。Android 从 API 28 起把内置 com.android.org.bouncycastle
+# 阉割(去 MD2/MD4/RIPEMD160 等 legacy 算法,理由:不安全)。所以 Security.getProvider("BC")
+# 拿到的 BC provider 没有 MD4,jcifs-ng 第一次 NTLM 握手就 NoSuchAlgorithmException。
+# 修法:加 bcprov-jdk15on 全量 jar,App.onCreate 里 Security.removeProvider("BC") 移除阉割版
+# 再 addProvider(BouncyCastleProvider()) 注册完整版。
+#
+# 用 jdk15on(不是 jdk18on!)因为 jcifs-ng 2.1.9 的 OSGi Import-Package 声明 org.bouncycastle*
+# version="1.63" 范围,且运行时反射加载 org.bouncycastle.asn1.ASN1ApplicationSpecific 等类
+# —— 这些类在 bcprov-jdk18on 1.78.1 已 API 重构移除(变成 ASN1ApplicationSpecificParser 等),
+# 导致 ClassNotFoundException。换回 jdk15on(1.70 最新稳定)保证 API 兼容。
+bcprov = { module = "org.bouncycastle:bcprov-jdk15on", version = "1.70" }
 
 about-libs-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "about-libs" }
 about-libs-ui-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "about-libs" }

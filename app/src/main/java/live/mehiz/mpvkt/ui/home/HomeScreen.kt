@@ -70,6 +70,7 @@ import live.mehiz.mpvkt.ui.history.HistoryScreen
 import live.mehiz.mpvkt.ui.player.PlayerActivity
 import live.mehiz.mpvkt.ui.player.isPlayable
 import live.mehiz.mpvkt.ui.preferences.PreferencesScreen
+import live.mehiz.mpvkt.ui.smb.W31SmbBrowserScreen
 import live.mehiz.mpvkt.ui.theme.spacing
 import live.mehiz.mpvkt.ui.utils.LocalBackStack
 import org.koin.compose.koinInject
@@ -87,9 +88,10 @@ object HomeScreen : Screen, KoinComponent {
     val backstack: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val historyRepository: PlaybackHistoryRepository = koinInject()
     val history by produceHistory(historyRepository)
-    // W31.36: 0.2.4-8 风格 2.0,完全用 Android 系统 SAF picker 选 SMB 视频
-    // (走 system-level DocumentsProvider 透明代理,无 W31 fork 自实现崩溃风险)
-    // 删 W31.5-W31.35 全部 SMB 自实现代码(ui/smb/ 整个目录 + smbj/jcifs-ng/BC 依赖)。
+    // W31.24: SMB 浏览器是 Box 全屏 overlay (不能放进 verticalScroll Column,会触发
+    // LazyColumn 被测到 infinity maxHeight → IllegalStateException)。
+    // state 提到 Content() 顶部,Box/Column 同级访问同一份 remember。
+    var showSmb by remember { mutableStateOf(false) }
 
     Scaffold(
       topBar = {
@@ -257,6 +259,31 @@ object HomeScreen : Screen, KoinComponent {
               Icon(Icons.Default.FileOpen, null)
               Text(text = stringResource(R.string.home_pick_file))
             }
+          }
+          // W31:SMB 局域网视频入口
+          OutlinedButton(onClick = { showSmb = true }) {
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Icon(Icons.Default.Storage, null)
+              Text(text = "SMB 局域网")
+            }
+          }
+        }
+      }
+      if (showSmb) {
+        androidx.compose.runtime.key(Unit) {
+          androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = androidx.compose.ui.graphics.Color.Black,
+          ) {
+            W31SmbBrowserScreen(
+              onDismiss = { showSmb = false },
+              onPlayFile = { file ->
+                playFile(file.absolutePath, context)
+              },
+            )
           }
         }
       }
