@@ -29,8 +29,8 @@ android {
     applicationId = "live.mehiz.mpvkt"
     minSdk = 21
     targetSdk = 36
-    versionCode = 28
-    versionName = "0.3.5"
+    versionCode = 29
+    versionName = "0.3.6"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -187,9 +187,7 @@ dependencies {
   implementation(libs.commons.compress)
   implementation(libs.fsaf)
 
-  // W31:局域网 SMB 视频播放。smbj 是纯 Java SMB1/2/3 client,
-  // 把 SMB UNC 路径缓存到本地 cache,然后 mpv 当本地 file:// 播。
-  implementation(libs.smbj)
+  // W31.28:删 smbj 依赖,回到 v0.2.4-8 风格(NAS 文件由 Android 系统 mount + SAF picker + mpv 流式)
 }
 
 detekt {

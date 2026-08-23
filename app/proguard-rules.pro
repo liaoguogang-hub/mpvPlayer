@@ -31,3 +31,8 @@
 -dontwarn javax.el.**
 # smbj SMB Kerberos 认证(我们只用 NTLM/guest,不需要 GSS)
 -dontwarn org.ietf.jgss.**
+# W31.28:删 smbj 后 R8 仍报 slf4j 缺类(smbj 0.13/0.14 依赖 SLF4J,删 smbj 后 slf4j 也没了,
+# 但 R8 keep 规则还引用了 smbj 内部 LoggerFactory.bind()。我们项目自己不用 SLF4J,
+# 这里 -dontwarn 让 R8 跳过 warning。
+-dontwarn org.slf4j.impl.StaticLoggerBinder
+-dontwarn org.slf4j.impl.**
