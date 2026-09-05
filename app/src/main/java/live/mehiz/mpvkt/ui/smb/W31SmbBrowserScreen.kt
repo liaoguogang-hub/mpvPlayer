@@ -11,12 +11,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,6 +68,11 @@ fun W31SmbBrowserScreen(
   val prefs = remember { W31SmbServerPreferences(context) }
 
   var showConfig by remember { mutableStateOf(!prefs.isConfigured) }
+  var serverMenu by remember { mutableStateOf(false) }
+  var showRename by remember { mutableStateOf(false) }
+  var renameText by remember { mutableStateOf("") }
+  var names by remember { mutableStateOf(prefs.profileNames()) }
+  fun refreshNames() { names = prefs.profileNames() }
   var path by remember { mutableStateOf("") }
   var entries by remember { mutableStateOf<List<W31SmbClient.Entry>>(emptyList()) }
   var loading by remember { mutableStateOf(false) }
@@ -118,13 +129,60 @@ fun W31SmbBrowserScreen(
         }
         Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
           Text(
-            text = if (prefs.isConfigured) "${prefs.server}/${prefs.share}" else "未配置",
+            text = if (!prefs.isConfigured) "未配置" else (if (prefs.name.isNotBlank()) prefs.name else prefs.server + "/" + prefs.share),
             color = Color.White,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
           )
           if (path.isNotEmpty()) {
             Text(text = "/$path", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+          }
+        }
+        Box {
+          IconButton(onClick = { names = prefs.profileNames(); serverMenu = true }) {
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "切换服务器", tint = Color.White)
+          }
+          DropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
+            names.forEachIndexed { idx, nm ->
+              DropdownMenuItem(
+                text = {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(nm, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                      text = "✎",
+                      color = Color(0xFF80C8FF),
+                      modifier = Modifier.clickable {
+                        prefs.selectIndex(idx)
+                        refreshNames()
+                        renameText = prefs.name
+                        serverMenu = false
+                        showRename = true
+                      }.padding(8.dp),
+                    )
+                  }
+                },
+                onClick = {
+                  prefs.selectIndex(idx)
+                  refreshNames()
+                  path = ""
+                  client = null
+                  serverMenu = false
+                  loadCurrent()
+                },
+              )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text("✎ 重命名当前配置") }, onClick = {
+              renameText = prefs.name
+              serverMenu = false
+              showRename = true
+            })
+            DropdownMenuItem(text = { Text("＋ 新建配置") }, onClick = {
+              prefs.newProfile()
+              refreshNames()
+              serverMenu = false
+              showConfig = true
+            })
           }
         }
         IconButton(onClick = { showConfig = true }) {
@@ -272,10 +330,48 @@ fun W31SmbBrowserScreen(
   if (showConfig) {
     W31SmbServerDialog(
       initial = prefs,
-      onDismiss = { showConfig = false },
+      onDismiss = {
+        prefs.discardBlankActive()
+        refreshNames()
+        showConfig = false
+      },
       onConfirm = {
+        prefs.saveActiveProfile()
+        refreshNames()
+        android.util.Log.i("SMB", "after-save names=" + names)
+        path = ""
         showConfig = false
         loadCurrent()
+      },
+    )
+  }
+
+  if (showRename) {
+    AlertDialog(
+      onDismissRequest = { showRename = false },
+      title = { Text("重命名配置") },
+      text = {
+        OutlinedTextField(
+          value = renameText,
+          onValueChange = { renameText = it },
+          singleLine = true,
+          label = { Text("配置名称") },
+          modifier = Modifier.fillMaxWidth(),
+        )
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          val nn = renameText.trim()
+          if (nn.isNotBlank()) {
+            prefs.name = nn
+            refreshNames()
+            android.util.Log.i("SMB", "renamed idx=" + prefs.activeIndex() + " to=" + nn + " all=" + prefs.profileNames())
+          }
+          showRename = false
+        }) { Text("保存") }
+      },
+      dismissButton = {
+        TextButton(onClick = { showRename = false }) { Text("取消") }
       },
     )
   }

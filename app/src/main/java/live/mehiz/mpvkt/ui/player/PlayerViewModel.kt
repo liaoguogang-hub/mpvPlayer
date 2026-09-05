@@ -129,10 +129,14 @@ class PlayerViewModel(
   private val _audioOnlyOverride = MutableStateFlow<Boolean?>(null)
   val audioOnlyOverride = _audioOnlyOverride.asStateFlow()
 
-  val isAudioOnly: StateFlow<Boolean> = combine(hasVideoTrack, _audioOnlyOverride) { hasVideo, override ->
+  // Container-based fallback: mp3/flac/… are audio even when mpv surfaces the embedded
+  // cover as a video-like "albumart" track (some encoders do not set the albumart flag).
+  private val _audioContainer = MutableStateFlow(false)
+
+  val isAudioOnly: StateFlow<Boolean> = combine(hasVideoTrack, _audioOnlyOverride, _audioContainer) { hasVideo, override, audioContainer ->
     when (override) {
       null -> when (playerPreferences.audioMode.get()) {
-        AudioMode.Auto -> !hasVideo
+        AudioMode.Auto -> audioContainer || !hasVideo
         AudioMode.AudioOnly -> true
         AudioMode.VideoUiOnly -> false
       }
@@ -215,9 +219,25 @@ class PlayerViewModel(
   private val _currentAudioUri = MutableStateFlow<String?>(null)
   val currentAudioUri = _currentAudioUri.asStateFlow()
 
+  /** Upgrade to audio-only when the real path carries an audio extension. Never
+   *  downgrades back to video on an unparseable path (that would flash/flip UI). */
+  fun markAudioContainer(name: String?) {
+    val n = name ?: return
+    if (n.substringAfterLast('.', "").lowercase() in audioExtensions) _audioContainer.value = true
+  }
+
+  /** Pre-set the container flag before mpv loads (avoid flashing the video UI). */
+  fun preseedAudioSource(name: String?) {
+    val n = name ?: return
+    _audioFileName.value = n
+    _audioContainer.value = n.substringAfterLast('.', "").lowercase() in audioExtensions
+  }
+
   fun setAudioSource(fileName: String, uri: String?) {
     _audioFileName.value = fileName
     _currentAudioUri.value = uri
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    _audioContainer.value = ext in audioExtensions
   }
 
   // --- mpv playlist awareness (next/prev buttons) --------------------------
@@ -262,7 +282,7 @@ class PlayerViewModel(
     lyricTickJob?.cancel()
     lyricTickJob = viewModelScope.launch {
       while (isActive) {
-        if (!_lyricState.value.isEmpty) {
+        if (!_lyricState.value.isEmpty && _lyricState.value.synced) {
           val posMs = (MPVLib.getPropertyDouble("time-pos") ?: 0.0) * 1000.0
           val lines = _lyricState.value.lines
           var idx = -1
@@ -573,6 +593,17 @@ class PlayerViewModel(
     _queue.value = q.copy(entries = sorted, index = ni)
   }
 
+  /** Build an explicit queue from external URI lists (file browser / play-next intents). */
+  fun setQueueFromUris(sources: List<String>, titles: List<String>?, startIndex: Int) {
+    val src = sources.filter { it.isNotBlank() }
+    if (src.isEmpty()) return
+    val entries = src.mapIndexed { i, s ->
+      QueueEntry(title = titles?.getOrNull(i)?.ifBlank { s } ?: s, source = s)
+    }
+    _queue.value = QueueState(entries = entries, index = -1, explicit = true)
+    requestQueuePlay(startIndex.coerceIn(0, entries.lastIndex.coerceAtLeast(0)))
+  }
+
   /** Replace the queue with a folder-browser selection (recursive, may mix folders). */
   fun setExplicitQueue(entries: List<QueueEntry>) {
     _queue.value = QueueState(entries = sortQueueEntries(entries, _queueOrder.value), index = -1, explicit = true)
@@ -736,7 +767,10 @@ class PlayerViewModel(
     }
   }
 
-  fun pauseUnpause() = MPVLib.command("cycle", "pause")
+  fun pauseUnpause() {
+    android.util.Log.d("AudioUX", "pauseUnpause tapped")
+    MPVLib.command("cycle", "pause")
+  }
   fun pause() = MPVLib.setPropertyBoolean("pause", true)
   fun unpause() = MPVLib.setPropertyBoolean("pause", false)
 

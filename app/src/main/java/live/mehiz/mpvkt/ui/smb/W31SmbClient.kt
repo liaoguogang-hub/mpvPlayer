@@ -166,24 +166,38 @@ class W31SmbClient(
           lastEmitRef = lastEmitRef,
           onProgress = onProgress,
           progressBase = 0L,
+          totalFile = total,
         )
       }
 
       if (prebuffered < total) {
-        if (isMoovAtEndMp4(target)) {
-          // W31.38: moov-at-end MP4 → 同步下完整个文件再开播,避免 mpv 扫
-          // 被 phase 2 正在 append 的尾部失败导致 duration=0 / 黑屏。
-          downloadRestOnly(
-            url = url,
-            target = target,
-            fromOffset = prebuffered,
-            total = total,
-            lastEmitRef = lastEmitRef,
-            onProgress = onProgress,
-          )
-          onProgress?.invoke(total, total)
+        val moovAtEnd = isMoovAtEndMp4(target)
+        android.util.Log.i("SMB", "stream decide total=" + total + " pre=" + prebuffered + " moovAtEnd=" + moovAtEnd)
+        if (moovAtEnd) {
+          // moov-at-end MP4: place the tail (moov/index) first so mpv can parse the
+          // file, then fill the middle gap in the background = true streaming.
+          val tailLen = minOf(TAIL_FETCH_BYTES, total - prebuffered)
+          val tailStart = total - tailLen
+          val tailOk = runCatching {
+            fetchTailIntoFile(url, target, tailStart, tailLen, total, lastEmitRef, onProgress)
+          }.isSuccess
+          if (!tailOk) {
+            target.delete()
+            downloadRestOnly(url, target, 0L, total, lastEmitRef, onProgress)
+            onProgress?.invoke(total, total)
+          } else {
+            val gapJob = W31SmbDownloadScope.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+              try {
+                fillGapIntoFile(url, target, prebuffered, tailStart, total, lastEmitRef, onProgress)
+                onProgress?.invoke(total, total)
+              } catch (e: Throwable) {
+                android.util.Log.w("W31SmbClient", "gap fill failed for " + remotePath + ": " + e.message, e)
+              }
+            }
+            W31SmbDownloadScope.track(remotePath, gapJob)
+          }
         } else {
-          // faststart MP4 / MKV / AVI / 其它 → 立即开播,phase 2 后台续传
+          // faststart MP4 / MKV / AVI / other -> play now, phase 2 fills the rest.
           val phase2Job = W31SmbDownloadScope.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
               downloadRestOnly(
@@ -196,7 +210,7 @@ class W31SmbClient(
               )
               onProgress?.invoke(total, total)
             } catch (e: Throwable) {
-              android.util.Log.w("W31SmbClient", "phase 2 failed for $remotePath: ${e.message}", e)
+              android.util.Log.w("W31SmbClient", "phase 2 failed for " + remotePath + ": " + e.message, e)
             }
           }
           W31SmbDownloadScope.track(remotePath, phase2Job)
@@ -218,7 +232,7 @@ class W31SmbClient(
   /// 代价只是多等几秒全量下载,可接受。
   private fun isMoovAtEndMp4(file: File): Boolean {
     if (!file.exists() || file.length() < 16) return false
-    val buf = ByteArray(256 * 1024)
+    val buf = ByteArray(1024 * 1024)
     val n = file.inputStream().use { it.read(buf) }
     if (n < 16) return false
     // MP4: bytes 4-7 = "ftyp"
@@ -261,6 +275,7 @@ class W31SmbClient(
         lastEmitRef = lastEmitRef,
         onProgress = onProgress,
         progressBase = fromOffset,
+        totalFile = total,
       )
     }
   }
@@ -270,6 +285,76 @@ class W31SmbClient(
   ///
   /// 实现:open `SmbFileInputStream` + `input.skip(fileOffset)` 走 SMB2 Read with Offset
   /// (jcifs-ng 1.x+ 实现,Apache repo 验证过),然后顺序 [length] 字节写到 output。
+  /// Fetch the tail bytes of a moov-at-end file into place so mpv can find the index.
+  private suspend fun fetchTailIntoFile(
+    url: String,
+    target: File,
+    tailStart: Long,
+    tailLen: Long,
+    total: Long,
+    lastEmitRef: AtomicLong,
+    onProgress: ((Long, Long) -> Unit)?,
+  ) {
+    java.io.RandomAccessFile(target, "rw").use { raf ->
+      raf.setLength(total)
+      raf.seek(tailStart)
+      SmbFile(url).use { smb ->
+        SmbFileInputStream(smb).use { input ->
+          if (tailStart > 0) {
+            val skipped = input.skip(tailStart)
+            if (skipped != tailStart) throw java.io.IOException("tail skip failed " + skipped + "/" + tailStart)
+          }
+          val buf = ByteArray(READ_CHUNK_SIZE)
+          var left = tailLen
+          while (left > 0) {
+            val want = minOf(buf.size.toLong(), left).toInt()
+            val n = input.read(buf, 0, want)
+            if (n <= 0) break
+            raf.write(buf, 0, n)
+            left -= n
+            emitProgressThrottled(total - left, total, lastEmitRef, onProgress)
+          }
+          if (left > 0) throw java.io.IOException("tail ended early: " + left + " bytes missing")
+        }
+      }
+    }
+  }
+
+  /// Fill the middle gap [fromOffset, untilOffset) at their real file offsets.
+  private suspend fun fillGapIntoFile(
+    url: String,
+    target: File,
+    fromOffset: Long,
+    untilOffset: Long,
+    total: Long,
+    lastEmitRef: AtomicLong,
+    onProgress: ((Long, Long) -> Unit)?,
+  ) {
+    val len = untilOffset - fromOffset
+    if (len <= 0) return
+    java.io.RandomAccessFile(target, "rw").use { raf ->
+      raf.seek(fromOffset)
+      SmbFile(url).use { smb ->
+        SmbFileInputStream(smb).use { input ->
+          if (fromOffset > 0) {
+            val skipped = input.skip(fromOffset)
+            if (skipped != fromOffset) throw java.io.IOException("gap skip failed " + skipped + "/" + fromOffset)
+          }
+          val buf = ByteArray(READ_CHUNK_SIZE)
+          var done = 0L
+          while (done < len) {
+            val want = minOf(buf.size.toLong(), len - done).toInt()
+            val n = input.read(buf, 0, want)
+            if (n <= 0) break
+            raf.write(buf, 0, n)
+            done += n
+            emitProgressThrottled(fromOffset + done, total, lastEmitRef, onProgress)
+          }
+        }
+      }
+    }
+  }
+
   private fun copyRangeToFile(
     smbFile: SmbFile,
     target: File,
@@ -279,6 +364,7 @@ class W31SmbClient(
     lastEmitRef: AtomicLong,
     onProgress: ((Long, Long) -> Unit)?,
     progressBase: Long,
+    totalFile: Long,
   ): Long {
     var written = 0L
     val end = length
@@ -299,7 +385,7 @@ class W31SmbClient(
           if (n <= 0) break
           output.write(buf, 0, n)
           written += n
-          emitProgressThrottled(progressBase + written, lastEmitRef, onProgress)
+          emitProgressThrottled(progressBase + written, totalFile, lastEmitRef, onProgress)
         }
         output.flush()
       }
@@ -309,6 +395,7 @@ class W31SmbClient(
 
   private fun emitProgressThrottled(
     downloaded: Long,
+    totalFile: Long,
     lastEmitRef: AtomicLong,
     onProgress: ((Long, Long) -> Unit)?,
   ) {
@@ -317,7 +404,7 @@ class W31SmbClient(
     val prev = lastEmitRef.get()
     if (now - prev > 100) {
       lastEmitRef.set(now)
-      onProgress(downloaded, downloaded)  // 不传 total,UI 用 state.total 自己算百分比
+      onProgress(downloaded, totalFile)
     }
   }
 
@@ -335,5 +422,6 @@ class W31SmbClient(
 
     /// 边下边播 prebuffer 字节数。32MB 够 1080p H264 (~26s) / 4K HEVC (~6s) 启动缓冲。
     private const val DEFAULT_PREBUFFER_BYTES: Long = 32L * 1024 * 1024
+    private const val TAIL_FETCH_BYTES: Long = 12L * 1024 * 1024
   }
 }

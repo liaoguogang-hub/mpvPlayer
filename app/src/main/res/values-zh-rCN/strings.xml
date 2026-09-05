@@ -7,9 +7,14 @@
     <string name="generic_ok">OK</string>
     <string name="generic_unit_ms">ms</string>
     <string name="generic_disabled">禁用</string>
-    <string name="home_pick_file">选择文件</string>
+    <string name="home_pick_file">选择单个文件（系统）</string>
+    <string name="filepicker_back_home">返回主页</string>
+    <string name="filepicker_play_from_here">从该文件开始连播本目录</string>
+    <string name="filepicker_play_folder_recursive">整目录（含子文件夹）顺序播放</string>
+    <string name="filepicker_play_now">立即播放</string>
+    <string name="filepicker_open_dir">打开目录</string>
     <string name="home_open_file_picker">打开文件选择器</string>
-    <string name="home_browse_files">浏览视频文件</string>
+    <string name="home_browse_files">浏览文件 / 目录</string>
     <string name="home_open_saf_picker">系统 SAF picker (高级)</string>
     <string name="home_open_url">打开 URL</string>
     <string name="home_url_input_label">URL</string>

@@ -2,18 +2,28 @@ package live.mehiz.mpvkt.ui.home
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.os.Build
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -21,20 +31,25 @@ import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +57,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.github.k1rakishou.fsaf.FileManager
 import com.github.k1rakishou.fsaf.file.AbstractFile
@@ -89,6 +105,16 @@ data class FilePickerScreen(val uri: String) : Screen {
             }
           },
         )
+      },
+      bottomBar = {
+        TextButton(
+          onClick = { backstack.removeAll { it is FilePickerScreen } },
+          modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        ) {
+          Icon(Icons.AutoMirrored.Default.ArrowBack, null)
+          Spacer(Modifier.width(6.dp))
+          Text(text = stringResource(id = R.string.filepicker_back_home))
+        }
       },
     ) { paddingValues ->
       FilePicker(
@@ -139,6 +165,8 @@ data class FilePickerScreen(val uri: String) : Screen {
     }
   }
 
+  private data class FileRow(val name: String, val isDir: Boolean, val lastModified: Long?, val length: Long?, val fullPath: String)
+
   @Composable
   fun FilePicker(
     directory: AbstractFile,
@@ -147,42 +175,151 @@ data class FilePickerScreen(val uri: String) : Screen {
   ) {
     val navigator: androidx.navigation3.runtime.NavBackStack<Screen> = LocalBackStack.current
     val fileManager = koinInject<FileManager>()
-    val fileList = fileManager.listFiles(directory).filterNot {
-      !Utils.MEDIA_EXTENSIONS.contains(fileManager.getName(it).substringAfterLast('.')) &&
-        fileManager.isFile(it) || fileManager.getName(it).startsWith('.')
-    }.sortedWith(FilesComparator(fileManager))
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var rows by remember { mutableStateOf<List<FileRow>?>(null) }
+    var menu by remember { mutableStateOf<FileRow?>(null) }
 
-    LazyColumn(modifier) {
-      item {
-        FileListing(
-          name = "..",
-          isDirectory = true,
-          lastModified = null,
-          length = 0L,
-          onClick = { navigator.removeLastOrNull() },
-          modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerLow),
-        )
-      }
-      itemsIndexed(fileList, key = { _, file -> fileManager.getName(file) }) { index, file ->
-        FileListing(
-          name = fileManager.getName(file),
-          isDirectory = fileManager.isDirectory(file),
-          lastModified = fileManager.lastModified(file),
-          length = if (fileManager.isFile(file)) fileManager.getLength(file) else null,
-          modifier = Modifier.background(
-            if (index % 2 == 1) {
-              MaterialTheme.colorScheme.surfaceContainerLow
+    // Directory listing runs off the main thread so large folders never freeze the UI.
+    LaunchedEffect(directory) {
+      rows = withContext(Dispatchers.IO) {
+        runCatching {
+          fileManager.listFiles(directory).mapNotNull { f ->
+            if (fileManager.getName(f).startsWith('.')) {
+              null
+            } else if (!fileManager.isDirectory(f) && !Utils.MEDIA_EXTENSIONS.contains(fileManager.getName(f).substringAfterLast('.'))) {
+              null
             } else {
-              MaterialTheme.colorScheme.surfaceContainerHigh
-            },
-          ),
-          items = if (fileManager.isDirectory(file)) fileManager.listFiles(file).size else null,
-          onClick = { onNavigate(file) },
-        )
+              FileRow(
+                name = fileManager.getName(f),
+                isDir = fileManager.isDirectory(f),
+                lastModified = fileManager.lastModified(f),
+                length = if (fileManager.isFile(f)) fileManager.getLength(f) else null,
+                fullPath = f.getFullPath(),
+              )
+            }
+          }.sortedWith { a, b ->
+            if (a.isDir != b.isDir) {
+              if (a.isDir) -1 else 1
+            } else {
+              naturalFileNameCompare(a.name, b.name)
+            }
+          }
+        }.getOrDefault(emptyList())
       }
+    }
+
+    fun launchOrdered(ordered: List<FileRow>, toastRes: Int) {
+      if (ordered.isEmpty()) return
+      val uris = ordered.map { it.fullPath }
+      val titles = ordered.map { it.name }
+      val i = Intent(Intent.ACTION_VIEW).apply {
+        setClass(context, PlayerActivity::class.java)
+        putExtra("playqueue", uris.toTypedArray())
+        putExtra("playqueue_titles", titles.toTypedArray())
+        putExtra("playqueue_index", 0)
+      }
+      context.startActivity(i)
+      Toast.makeText(context, context.getString(toastRes), Toast.LENGTH_SHORT).show()
+    }
+
+    val list = rows
+    if (list == null) {
+      Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
+      }
+    } else {
+      LazyColumn(modifier) {
+        item {
+          FileListing(
+            name = "..",
+            isDirectory = true,
+            lastModified = null,
+            length = 0L,
+            onClick = { navigator.removeLastOrNull() },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerLow),
+          )
+        }
+        itemsIndexed(list, key = { _, row -> row.name }) { index, row ->
+          FileListing(
+            name = row.name,
+            isDirectory = row.isDir,
+            lastModified = row.lastModified,
+            length = row.length,
+            modifier = Modifier.background(
+              if (index % 2 == 1) {
+                MaterialTheme.colorScheme.surfaceContainerLow
+              } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+              },
+            ),
+            onClick = {
+              val af = fileManager.fromUri(row.fullPath.toUri())
+              if (af != null) onNavigate(af)
+            },
+            onLongClick = { menu = row },
+          )
+        }
+      }
+    }
+
+    // Long-press menu: let the user choose instead of auto-playing.
+    menu?.let { target ->
+      AlertDialog(
+        onDismissRequest = { menu = null },
+        title = { Text(text = target.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+          Column {
+            if (target.isDir) {
+              DialogAction(text = stringResource(R.string.filepicker_open_dir)) {
+                val af = fileManager.fromUri(target.fullPath.toUri())
+                menu = null
+                if (af != null) onNavigate(af)
+              }
+              DialogAction(text = stringResource(R.string.filepicker_play_folder_recursive)) {
+                menu = null
+                scope.launch {
+                  val af = fileManager.fromUri(target.fullPath.toUri())
+                  val acc = ArrayList<AbstractFile>()
+                  if (af != null) collectMedia(af, fileManager, 0, acc)
+                  val rowsOut = acc.map { FileRow(fileManager.getName(it), false, null, null, it.getFullPath()) }
+                  withContext(Dispatchers.Main) { launchOrdered(rowsOut, R.string.filepicker_play_folder_recursive) }
+                }
+              }
+            } else {
+              DialogAction(text = stringResource(R.string.filepicker_play_now)) {
+                val af = fileManager.fromUri(target.fullPath.toUri())
+                menu = null
+                if (af != null) onNavigate(af)
+              }
+              DialogAction(text = stringResource(R.string.filepicker_play_from_here)) {
+                menu = null
+                val files = (rows ?: emptyList()).filter { !it.isDir }
+                val pos = files.indexOfFirst { it.fullPath == target.fullPath }.coerceAtLeast(0)
+                launchOrdered(files.subList(pos, files.size), R.string.filepicker_play_from_here)
+              }
+            }
+          }
+        },
+        confirmButton = {},
+        dismissButton = {
+          TextButton(onClick = { menu = null }) { Text(text = stringResource(R.string.generic_cancel)) }
+        },
+      )
     }
   }
 
+  @Composable
+  private fun DialogAction(text: String, onClick: () -> Unit) {
+    Row(
+      modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(text = text, color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+    }
+  }
+
+  @OptIn(ExperimentalFoundationApi::class)
   @Composable
   fun FileListing(
     name: String,
@@ -192,6 +329,7 @@ data class FilePickerScreen(val uri: String) : Screen {
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     items: Int? = null,
+    onLongClick: (() -> Unit)? = null,
   ) {
     var size: String? by remember { mutableStateOf(null) }
     var time: String? by remember { mutableStateOf(null) }
@@ -207,7 +345,7 @@ data class FilePickerScreen(val uri: String) : Screen {
     }
     Row(
       modifier = modifier
-        .clickable(onClick = onClick)
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         .fillMaxWidth()
         .heightIn(min = 64.dp)
         .padding(vertical = MaterialTheme.spacing.smaller, horizontal = MaterialTheme.spacing.medium),
@@ -304,4 +442,40 @@ data class FilePickerScreen(val uri: String) : Screen {
       units.current(),
     )
   }
+}
+
+/** Depth-limited recursive media collector used by folder long-press playback. */
+private fun collectMedia(dir: AbstractFile, fileManager: FileManager, depth: Int, acc: MutableList<AbstractFile>) {
+  if (depth > 6 || acc.size >= 800) return
+  val children = runCatching { fileManager.listFiles(dir) }.getOrNull() ?: return
+  children.sortedWith(FilesComparator(fileManager)).forEach { child ->
+    if (acc.size >= 800) return@forEach
+    val name = fileManager.getName(child)
+    if (name.startsWith('.')) return@forEach
+    if (fileManager.isDirectory(child)) {
+      collectMedia(child, fileManager, depth + 1, acc)
+    } else if (Utils.MEDIA_EXTENSIONS.contains(name.substringAfterLast('.'))) {
+      acc.add(child)
+    }
+  }
+}
+
+/** Natural (human) file-name ordering: "2" < "10". */
+private fun naturalFileNameCompare(a: String, b: String): Int {
+  val re = Regex("(\\d+)|(\\D+)")
+  val pa = re.findAll(a).map { it.value }.toList()
+  val pb = re.findAll(b).map { it.value }.toList()
+  val n = minOf(pa.size, pb.size)
+  for (i in 0 until n) {
+    val x = pa[i]; val y = pb[i]
+    if (x.all { it.isDigit() } && y.all { it.isDigit() }) {
+      val dx = x.trimStart('0').let { if (it.isEmpty()) 0 else it.toLong() }
+      val dy = y.trimStart('0').let { if (it.isEmpty()) 0 else it.toLong() }
+      if (dx != dy) return dx.compareTo(dy)
+    } else {
+      val c = x.compareTo(y, ignoreCase = true)
+      if (c != 0) return c
+    }
+  }
+  return pa.size.compareTo(pb.size)
 }

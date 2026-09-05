@@ -168,7 +168,7 @@ fun PlayerControls(
     viewModel.showControls()
   }
   val transparentOverlay by animateFloatAsState(
-    if (controlsShown && !areControlsLocked) .8f else 0f,
+    if (controlsShown) .8f else 0f,
     animationSpec = playerControlsExitAnimationSpec(),
     label = "controls_transparent_overlay",
   )
@@ -208,7 +208,6 @@ fun PlayerControls(
         ) {
         val (topLeftControls, topRightControls) = createRefs()
         val (volumeSlider, brightnessSlider) = createRefs()
-        val unlockControlsButton = createRef()
         val (bottomRightControls, bottomLeftControls) = createRefs()
         val playerPauseButton = createRef()
         val seekbar = createRef()
@@ -337,21 +336,7 @@ fun PlayerControls(
         }
 
         AnimatedVisibility(
-          controlsShown && areControlsLocked,
-          enter = fadeIn(),
-          exit = fadeOut(),
-          modifier = Modifier.constrainAs(unlockControlsButton) {
-            top.linkTo(parent.top, spacing.medium)
-            start.linkTo(parent.start, spacing.medium)
-          },
-        ) {
-          ControlsButton(
-            Icons.Filled.Lock,
-            onClick = { viewModel.unlockControls() },
-          )
-        }
-        AnimatedVisibility(
-          visible = (controlsShown && !areControlsLocked || gestureSeekAmount != null) || pausedForCache == true,
+          visible = (controlsShown || gestureSeekAmount != null) || pausedForCache == true,
           enter = fadeIn(playerControlsEnterAnimationSpec()),
           exit = fadeOut(playerControlsExitAnimationSpec()),
           modifier = Modifier.constrainAs(playerPauseButton) {
@@ -388,7 +373,7 @@ fun PlayerControls(
               )
             }
 
-            controlsShown && !areControlsLocked -> Image(
+            controlsShown -> Image(
               painter = rememberAnimatedVectorPainter(icon, paused == false),
               modifier = Modifier
                 .size(96.dp)
@@ -404,7 +389,7 @@ fun PlayerControls(
           }
         }
         AnimatedVisibility(
-          visible = (controlsShown || seekBarShown) && !areControlsLocked,
+          visible = (controlsShown || seekBarShown),
           enter = if (!reduceMotion) {
             slideInVertically(playerControlsEnterAnimationSpec()) { it } +
               fadeIn(playerControlsEnterAnimationSpec())
@@ -443,7 +428,7 @@ fun PlayerControls(
         }
         val mediaTitle by MPVLib.propString["media-title"].collectAsState()
         AnimatedVisibility(
-          controlsShown && !areControlsLocked,
+          controlsShown,
           enter = if (!reduceMotion) {
             slideInHorizontally(playerControlsEnterAnimationSpec()) { -it } +
               fadeIn(playerControlsEnterAnimationSpec())
@@ -470,7 +455,7 @@ fun PlayerControls(
         }
         // Top right controls
         AnimatedVisibility(
-          controlsShown && !areControlsLocked,
+          controlsShown,
           enter = if (!reduceMotion) {
             slideInHorizontally(playerControlsEnterAnimationSpec()) { it } +
               fadeIn(playerControlsEnterAnimationSpec())
@@ -506,7 +491,7 @@ fun PlayerControls(
         // Bottom right controls
         val customButtonTitle by viewModel.primaryButtonTitle.collectAsState()
         AnimatedVisibility(
-          controlsShown && !areControlsLocked,
+          controlsShown,
           enter = if (!reduceMotion) {
             slideInHorizontally(playerControlsEnterAnimationSpec()) { it } +
               fadeIn(playerControlsEnterAnimationSpec())
@@ -549,7 +534,7 @@ fun PlayerControls(
         }
         // Bottom left controls
         AnimatedVisibility(
-          controlsShown && !areControlsLocked,
+          controlsShown,
           enter = if (!reduceMotion) {
             slideInHorizontally(playerControlsEnterAnimationSpec()) { -it } +
               fadeIn(playerControlsEnterAnimationSpec())
@@ -574,7 +559,10 @@ fun PlayerControls(
             playbackSpeed = playbackSpeed ?: playerPreferences.defaultSpeed.get(),
             showChapterIndicator = showChapterIndicator,
             currentChapter = chapters.getOrNull(currentChapter ?: 0),
-            onLockControls = viewModel::lockControls,
+            locked = areControlsLocked,
+            onLockControls = {
+              if (areControlsLocked) viewModel.unlockControls() else viewModel.lockControls()
+            },
             onCycleRotation = viewModel::cycleScreenRotations,
             onPlaybackSpeedChange = {
               MPVLib.setPropertyFloat("speed", it)

@@ -42,6 +42,14 @@ fun W31SmbServerDialog(
     text = {
       Column(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
+          value = initial.name,
+          onValueChange = { initial.name = it },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+          label = { Text("名称 (可选，用于下拉列表)") },
+          placeholder = { Text("NAS-客厅") },
+        )
+        OutlinedTextField(
           value = server,
           onValueChange = { server = it },
           singleLine = true,
@@ -104,6 +112,7 @@ fun W31SmbServerDialog(
           initial.username = username
           initial.password = password
           initial.domain = domain
+          android.util.Log.i("SMB", "save name=" + initial.name + " server=" + initial.server + " share=" + initial.share)
           onConfirm()
         },
         enabled = server.isNotBlank() && share.isNotBlank(),

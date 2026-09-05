@@ -284,33 +284,6 @@ object HomeScreen : Screen, KoinComponent {
               Text(text = stringResource(R.string.home_browse_files))
             }
           }
-          val documentPicker = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument(),
-          ) {
-            if (it == null) return@rememberLauncherForActivityResult
-            // W31.18: ACTION_OPEN_DOCUMENT 返回的 content URI 默认带临时 grant
-            // (跟着 Activity 生命周期走),重启 app 后再访问就 SecurityException。
-            // 历史播放点开历史记录会取这个 URI 重启,必须 take 持久权限。
-            try {
-              val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-              context.contentResolver.takePersistableUriPermission(it, flags)
-            } catch (e: SecurityException) {
-              // 极少数 provider 不允许持久化,不影响本次播放
-              android.util.Log.w("HomeScreen", "takePersistableUriPermission failed: ${e.message}")
-            }
-            playFile(it.toString(), context)
-          }
-          // W31.27:SAF document picker 提升为主入口(原 v0.2.4-8 风格)。FilePickerScreen
-          // 仍保留作为内置浏览,SAF 走系统 DocumentsUI / Files 跨 app 共享。
-          OutlinedButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Icon(Icons.Default.FileOpen, null)
-              Text(text = stringResource(R.string.home_pick_file))
-            }
-          }
           // W31:SMB 局域网视频入口
           OutlinedButton(onClick = { showSmb = true }) {
             Row(
@@ -431,7 +404,16 @@ object HomeScreen : Screen, KoinComponent {
   ) {
     // W31.18: 预检 content URI 权限,失效就 Toast + 删历史条目,避免 PlayerActivity.onCreate 闪退
     val uri = runCatching { filepath.toUri() }.getOrNull()
-    if (uri != null && !uri.isPlayable(context)) {
+    // A bare file name (no scheme and not an absolute path) is a stale history row:
+    // drop it instead of launching a doomed playback.
+    if (uri == null || (uri.scheme == null && !filepath.startsWith("/"))) {
+      Toast.makeText(context, "File no longer accessible, removing from history", Toast.LENGTH_LONG).show()
+      kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        historyRepo.deleteByUri(filepath)
+      }
+      return
+    }
+    if (!uri.isPlayable(context)) {
       Toast.makeText(context, "File no longer accessible, removing from history", Toast.LENGTH_LONG).show()
       kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
         historyRepo.deleteByUri(filepath)

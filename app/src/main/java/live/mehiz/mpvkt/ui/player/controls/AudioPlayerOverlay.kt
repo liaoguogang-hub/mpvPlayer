@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -39,6 +41,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.QueueMusic
@@ -79,6 +83,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -90,6 +95,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import live.mehiz.mpvkt.R
@@ -129,6 +135,7 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
   val queueState by viewModel.queue.collectAsState()
   val playMode by viewModel.playMode.collectAsState()
   val queueOrder by viewModel.queueOrder.collectAsState()
+  val mpvPaused by MPVLib.propBoolean["pause"].collectAsState()
   val scope = rememberCoroutineScope()
   val uxPrefs = remember { context.getSharedPreferences("audio_ux", Context.MODE_PRIVATE) }
   var restored by remember { mutableStateOf(false) }
@@ -138,6 +145,9 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
   var showQueueSheet by remember { mutableStateOf(false) }
   var folderLoading by remember { mutableStateOf(false) }
   var dragPosition by remember { mutableStateOf<Float?>(null) }
+  var controlsLocked by remember { mutableStateOf(false) }
+  var hint by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(hint) { if (hint != null) { delay(900); hint = null } }
 
   BackHandler(enabled = panel != AudioPanel.None || showQueueSheet) {
     if (panel != AudioPanel.None) panel = AudioPanel.None else showQueueSheet = false
@@ -196,6 +206,7 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
   }
   LaunchedEffect(queueOrder) { uxPrefs.edit().putInt("folder_order", queueOrder.ordinal).apply() }
   LaunchedEffect(playMode) { uxPrefs.edit().putInt("folder_mode", playMode.ordinal).apply() }
+  LaunchedEffect(mpvPaused) { android.util.Log.i("AudioUX", "paused=" + mpvPaused) }
 
   Box(modifier = modifier.fillMaxSize().systemBarsPadding()) {
     // Full-bleed blurred artwork as the ambient backdrop (Spotify style).
@@ -230,17 +241,44 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
           color = TextHi, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
           modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
         )
+        IconButton(onClick = { controlsLocked = !controlsLocked }) {
+          Icon(
+            if (controlsLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+            stringResource(R.string.audio_player_switch_to_video),
+            tint = if (controlsLocked) Accent else TextMid,
+          )
+        }
         IconButton(onClick = { viewModel.toggleAudioOnlyMode() }) { Icon(Icons.Outlined.Movie, stringResource(R.string.audio_player_switch_to_video), tint = TextMid) }
       }
 
       // ===== Main pane =====
       Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-        if (showLyrics && !lyrics.isEmpty) LyricsPane(viewModel, lyrics, lyricIndex)
-        else NowPlayingPane(displayTitle, metadata.artist, metadata.album, artwork)
+        if (showLyrics && !lyrics.isEmpty) {
+          LyricsPane(viewModel, lyrics, lyricIndex)
+        } else {
+          NowPlayingPane(displayTitle, metadata.artist, metadata.album, artwork)
+          if (!controlsLocked) {
+            AudioGestureSurface(
+              viewModel = viewModel,
+              onHint = { hint = it },
+              modifier = Modifier.matchParentSize(),
+            )
+          }
+        }
+        // Gesture feedback bubble
+        hint?.let { h ->
+          Box(
+            modifier = Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = 0.65f)).padding(horizontal = 16.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            Text(h, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+          }
+        }
       }
 
       // ===== Bottom cluster =====
       Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
+        if (!controlsLocked) {
         if (queueState.entries.isNotEmpty()) {
           ModeLine(
             mode = playMode, order = queueOrder,
@@ -282,10 +320,22 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
             Icon(Icons.Filled.SkipPrevious, stringResource(R.string.audio_player_seek_back), tint = if (canPrev) TextHi else TextLow, modifier = Modifier.size(40.dp))
           }
           Box(
-            modifier = Modifier.size(76.dp).clip(CircleShape).background(TextHi.copy(alpha = 0.14f)).border(1.dp, TextHi.copy(alpha = 0.18f), CircleShape).clickable { viewModel.pauseUnpause() },
+            modifier = Modifier.size(76.dp).clip(CircleShape).background(TextHi.copy(alpha = 0.14f)).border(1.dp, TextHi.copy(alpha = 0.18f), CircleShape).clickable {
+              android.util.Log.i("AudioUX", "play button tapped, paused=" + mpvPaused)
+              if (mpvPaused != false) {
+                // At the end of a track (or an idle player) mpv cannot resume forward;
+                // restart from the beginning so the play button always responds audibly.
+                val d = viewModel.duration ?: 0
+                val p = viewModel.pos ?: 0
+                if (d <= 0 || p >= d - 2) viewModel.seekTo(0, precise = true)
+                viewModel.unpause()
+              } else {
+                viewModel.pause()
+              }
+            },
             contentAlignment = Alignment.Center,
           ) {
-            Icon(if (viewModel.paused != false) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, tint = TextHi, modifier = Modifier.size(42.dp))
+            Icon(if (mpvPaused != false) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, tint = TextHi, modifier = Modifier.size(42.dp))
           }
           IconButton(onClick = { viewModel.playUserNext() }, enabled = canNext, modifier = Modifier.size(64.dp)) {
             Icon(Icons.Filled.SkipNext, stringResource(R.string.audio_player_seek_forward), tint = if (canNext) TextHi else TextLow, modifier = Modifier.size(40.dp))
@@ -303,6 +353,7 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
           DockIcon(Icons.Filled.FolderOpen, false, false, stringResource(R.string.audio_chip_folder), onClick = { showQueueSheet = true })
         }
         Spacer(Modifier.height(8.dp))
+        }
       }
     }
 
@@ -321,6 +372,7 @@ fun AudioPlayerOverlay(viewModel: PlayerViewModel, onBackPress: () -> Unit, modi
         else -> Unit
       }
     }
+
   }
 }
 
@@ -365,7 +417,7 @@ private fun LyricsPane(viewModel: PlayerViewModel, lyrics: LyricDoc, activeIndex
         fontSize = if (active) 18.sp else 15.sp,
         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
         textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().clickable { viewModel.seekTo((line.timeMs / 1000L).toInt(), precise = true) }.padding(horizontal = 24.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = lyrics.synced) { viewModel.seekTo((line.timeMs / 1000L).toInt(), precise = true) }.padding(horizontal = 24.dp, vertical = 8.dp),
       )
     }
     item { Spacer(Modifier.height(24.dp)) }
@@ -666,6 +718,103 @@ private fun QueueSheet(
 }
 
 // ===== Formatting ===========================================================
+/** Audio-page gestures: hold = 2x speed, horizontal drag = seek, vertical drag = volume (0-100%). */
+@Composable
+private fun AudioGestureSurface(viewModel: PlayerViewModel, onHint: (String) -> Unit, modifier: Modifier = Modifier) {
+  Box(
+    modifier = modifier.pointerInput(Unit) {
+      awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var lastX = down.position.x
+        var lastY = down.position.y
+        var totalX = 0f
+        var totalY = 0f
+        var mode = 0 // 0 none, 1 seek, 2 volume, 3 hold-2x
+        var seekStart = viewModel.pos ?: 0
+        var lastSeek = seekStart
+        var speedBoosted = false
+        var volAcc = 0f
+        var hintTick = 0L
+        val maxDx = size.width / 60f
+        val maxDy = size.height / 60f
+        while (true) {
+          val ev = awaitPointerEvent()
+          val change = ev.changes.firstOrNull { it.id == down.id } ?: break
+          val rawDx = change.position.x - lastX
+          val rawDy = change.position.y - lastY
+          lastX = change.position.x
+          lastY = change.position.y
+          val dx = rawDx.coerceIn(-maxDx, maxDx)
+          val dy = rawDy.coerceIn(-maxDy, maxDy)
+          totalX += dx
+          totalY += dy
+          if (mode != 0) change.consume()
+          if (mode == 0) {
+            val slop = 20f
+            val idleTime = change.uptimeMillis - down.uptimeMillis
+            if (idleTime > 600L && kotlin.math.abs(totalX) < slop && kotlin.math.abs(totalY) < slop) {
+              mode = 3
+              val base = MPVLib.getPropertyDouble("speed") ?: 1.0
+              MPVLib.setPropertyDouble("speed", base * 2.0)
+              speedBoosted = true
+              onHint("2x")
+            } else if (kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * 1.4f && kotlin.math.abs(totalX) > slop) {
+              mode = 1
+              seekStart = viewModel.pos ?: 0
+              lastSeek = seekStart
+              change.consume()
+            } else if (kotlin.math.abs(totalY) > kotlin.math.abs(totalX) * 1.4f && kotlin.math.abs(totalY) > slop) {
+              mode = 2
+              change.consume()
+            }
+          }
+          when (mode) {
+            1 -> {
+              val dur = (viewModel.duration ?: 0).toFloat()
+              if (dur > 0f) {
+                val raw = (totalX / size.width.toFloat()) * dur * 0.75f
+                val eased = kotlin.math.sign(raw) * kotlin.math.sqrt(kotlin.math.abs(raw)) * 6f
+                val target = (seekStart + eased).toInt().coerceIn(0, viewModel.duration ?: 0)
+                if (kotlin.math.abs(target - lastSeek) >= 1) {
+                  if (target != viewModel.pos) viewModel.seekTo(target, precise = false)
+                  lastSeek = target
+                  val delta = target - seekStart
+                  val now = System.currentTimeMillis()
+                  if (now - hintTick > 120) {
+                    hintTick = now
+                    onHint((if (delta >= 0) "+" else "") + formatTime(kotlin.math.abs(delta).toLong()))
+                  }
+                }
+              }
+            }
+            2 -> {
+              val step = 100f / (size.height.toFloat() * 1.5f)
+              volAcc += -dy * step
+              if (kotlin.math.abs(volAcc) >= 1f) {
+                val d = volAcc.toInt()
+                val cur = MPVLib.getPropertyInt("volume") ?: 100
+                val next = (cur + d).coerceIn(0, 100)
+                MPVLib.setPropertyInt("volume", next)
+                volAcc -= d
+                val now = System.currentTimeMillis()
+                if (now - hintTick > 120) {
+                  hintTick = now
+                  onHint("音量 " + next + "%")
+                }
+              }
+            }
+          }
+          if (!change.pressed) break
+        }
+        if (mode == 3 && speedBoosted) {
+          val base = MPVLib.getPropertyDouble("speed") ?: 1.0
+          MPVLib.setPropertyDouble("speed", base / 2.0)
+        }
+      }
+    },
+  )
+}
+
 private fun formatTime(seconds: Long): String {
   if (seconds <= 0) return "0:00"
   val h = seconds / 3600

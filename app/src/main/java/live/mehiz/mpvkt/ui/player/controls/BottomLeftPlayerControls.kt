@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.runtime.Composable
@@ -23,6 +24,7 @@ fun BottomLeftPlayerControls(
   playbackSpeed: Float,
   currentChapter: Segment?,
   showChapterIndicator: Boolean,
+  locked: Boolean,
   onLockControls: () -> Unit,
   onCycleRotation: () -> Unit,
   onPlaybackSpeedChange: (Float) -> Unit,
@@ -34,7 +36,7 @@ fun BottomLeftPlayerControls(
     verticalAlignment = Alignment.CenterVertically,
   ) {
     ControlsButton(
-      Icons.Default.LockOpen,
+      if (locked) Icons.Default.Lock else Icons.Default.LockOpen,
       onClick = onLockControls,
     )
     ControlsButton(

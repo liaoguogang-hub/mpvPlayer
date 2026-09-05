@@ -18,6 +18,13 @@ import android.media.MediaMetadataRetriever
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -49,6 +56,7 @@ import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import live.mehiz.mpvkt.database.entities.CustomButtonEntity
@@ -89,7 +97,9 @@ class PlayerActivity : AppCompatActivity() {
   private val gesturePreferences: GesturePreferences by inject()
   private val fileManager: FileManager by inject()
   private val nowPlayingHolder: NowPlayingHolder by inject()
+  private var playerUiReady by mutableStateOf(false)
   private var lastLoadedPlayableUri: String? = null
+  private var historySource: String? = null
 
   private var fileName = ""
   private var mediaPlaybackService: MediaPlaybackService? = null
@@ -121,6 +131,24 @@ class PlayerActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // Orient the window BEFORE setContentView: otherwise the first frame attaches
+    // with the current (possibly landscape) orientation and only then rotates.
+    val earlyName = getFileName(intent)
+    val earlyAudio = earlyName.substringAfterLast('.', "").lowercase() in audioExtensions ||
+      intent.data?.let { detectAudioHeader(this, it) } == true
+    android.util.Log.i("AudioUX", "early name=" + earlyName + " data=" + intent.data + " audio=" + earlyAudio + " rot=" + requestedOrientation)
+    if (earlyAudio) {
+      requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    } else {
+      setOrientation()
+    }
+    // Orientation changes (incl. the audio page forcing portrait) jump instantly
+    // instead of playing the ~300ms rotation animation that looks like a flash.
+    runCatching {
+      window.attributes = window.attributes.apply {
+        rotationAnimation = WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT
+      }
+    }
     setContentView(binding.root)
 
     setupMPV()
@@ -132,7 +160,21 @@ class PlayerActivity : AppCompatActivity() {
     if (initialName.isNotBlank()) {
       MPVLib.setOptionString("force-media-title", initialName)
     }
-    getPlayableUri(intent)?.let(player::playFile)
+    // Decide the audio/video page before mpv starts so an audio file never flashes
+    // the video UI (queue playlists carry their own titles).
+    val queueNames = intent.getStringArrayExtra("playqueue_titles")
+    val queueSources = intent.getStringArrayExtra("playqueue")
+    val firstQueuedName = if (queueSources != null) {
+      queueNames?.firstOrNull() ?: queueSources.firstOrNull()?.substringAfterLast('/')
+    } else {
+      null
+    }
+    viewModel.preseedAudioSource(firstQueuedName ?: initialName)
+    applyOrientationFor(firstQueuedName ?: initialName)
+    // A file browser can hand us a whole playlist (ordered URIs).
+    if (!handlePlayQueueIntent(intent)) {
+      getPlayableUri(intent)?.let(player::playFile)
+    }
     setOrientation()
 
     // Audio/video mode integration.
@@ -152,6 +194,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         // Audio page must always be portrait; switching back re-applies the pref.
         setOrientation()
+        android.util.Log.i("AudioUX", "isAudioOnly=" + audioOnly + " title=" + viewModel.audioFileName.value)
       }
     }
 
@@ -162,7 +205,7 @@ class PlayerActivity : AppCompatActivity() {
       viewModel.audioMetadata.collect { meta: PlayerViewModel.AudioTrackInfo ->
         nowPlayingHolder.update(
           NowPlayingState(
-            uri = intent.data?.toString().orEmpty(),
+            uri = (historySource ?: intent.data?.toString()).orEmpty(),
             title = meta.title,
             artist = meta.artist,
             album = meta.album,
@@ -184,15 +227,23 @@ class PlayerActivity : AppCompatActivity() {
 
     binding.controls.setContent {
       MpvKtTheme {
-        PlayerControls(
-          viewModel = viewModel,
-          onBackPress = ::finish,
-          modifier = Modifier.onGloballyPositioned {
-            pipRect = it.boundsInWindow().toAndroidRect()
-          },
-        )
+        if (!playerUiReady) {
+          // Keep an opaque screen until the first file loads so the wrong mode
+          // (video vs audio) is never shown even for a frame.
+          Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+        } else {
+          PlayerControls(
+            viewModel = viewModel,
+            onBackPress = ::finish,
+            modifier = Modifier.onGloballyPositioned {
+              pipRect = it.boundsInWindow().toAndroidRect()
+            },
+          )
+        }
       }
     }
+    // Safety net: never block the UI if FILE_LOADED is slow to arrive.
+    lifecycleScope.launch { delay(2500); playerUiReady = true }
   }
 
   private fun getPlayableUri(intent: Intent): String? {
@@ -529,6 +580,20 @@ class PlayerActivity : AppCompatActivity() {
     }
   }
 
+  /**
+   * If the intent carries a "playqueue" string-array, replace single-file playback
+   * with a queued session starting at playqueue_index (used by the folder browser:
+   * "play from here / play whole folder").
+   */
+  private fun handlePlayQueueIntent(intent: Intent): Boolean {
+    val sources = intent.getStringArrayExtra("playqueue")?.toList() ?: return false
+    if (sources.isEmpty()) return false
+    val titles = intent.getStringArrayExtra("playqueue_titles")
+    val start = intent.getIntExtra("playqueue_index", 0)
+    viewModel.setQueueFromUris(sources, titles?.toList(), start)
+    return true
+  }
+
   @Suppress("NestedBlockDepth")
   private fun parsePathFromIntent(intent: Intent): String? {
     return when (intent.action) {
@@ -556,7 +621,7 @@ class PlayerActivity : AppCompatActivity() {
    * caller's thread – always invoke from a background coroutine.
    */
   private fun extractEmbeddedArtwork(): Bitmap? {
-    val source = intent.data ?: return null
+    val source = historySource?.let { android.net.Uri.parse(it) } ?: intent.data ?: return null
     if (source.scheme == "http" || source.scheme == "https") return null
     return runCatching {
       val retriever = MediaMetadataRetriever()
@@ -576,7 +641,7 @@ class PlayerActivity : AppCompatActivity() {
    * pickers cannot enumerate sibling files, those users can pick an .lrc manually.
    */
   private fun autoFindLyricsText(): Pair<String, String>? {
-    val source = intent.data ?: return null
+    val source = historySource?.let { android.net.Uri.parse(it) } ?: intent.data ?: return null
     if (source.scheme != "file") return null
     val media = File(source.path ?: return null)
     if (!media.isFile) return null
@@ -592,6 +657,24 @@ class PlayerActivity : AppCompatActivity() {
     val text = runCatching { String(raw, Charsets.UTF_8) }.getOrNull()
       ?: runCatching { String(raw, Charset.forName("GBK")) }.getOrNull()
     return if (text.isNullOrBlank()) null else (text to lrc.name)
+  }
+
+  /** Cheap container sniff via file header; used before the first frame when the
+   *  URI has no usable file name (e.g. opaque SAF document ids). */
+  private fun detectAudioHeader(context: Context, uri: android.net.Uri): Boolean {
+    return try {
+      val bytes = ByteArray(16)
+      val n = context.contentResolver.openInputStream(uri)?.use { input -> input.read(bytes, 0, 16) } ?: 0
+      if (n < 4) false
+      else if (bytes[0] == 'I'.code.toByte() && bytes[1] == 'D'.code.toByte() && bytes[2] == '3'.code.toByte()) true
+      else if (bytes[0] == 'f'.code.toByte() && bytes[1] == 'L'.code.toByte() && bytes[2] == 'a'.code.toByte() && bytes[3] == 'C'.code.toByte()) true
+      else if (bytes[0] == 'O'.code.toByte() && bytes[1] == 'g'.code.toByte() && bytes[2] == 'g'.code.toByte() && bytes[3] == 'S'.code.toByte()) true
+      else if (bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte()) true
+      else if ((bytes[0].toInt() and 0xFF) == 0xFF && (bytes[1].toInt() and 0xE0) == 0xE0) true
+      else false
+    } catch (_: Exception) {
+      false
+    }
   }
 
   private fun getFileName(intent: Intent): String {
@@ -682,7 +765,10 @@ class PlayerActivity : AppCompatActivity() {
           getFileName(intent)
         }
         lastLoadedPlayableUri = fileLoadedUri
+        historySource = fileLoadedUri
         viewModel.setAudioSource(fileName, fileLoadedUri)
+        // Fall back to mpv's real path extension for opaque content URIs.
+        MPVLib.getPropertyString("path")?.let { viewModel.markAudioContainer(it) }
         viewModel.notifyAudioFileLoaded(fileLoadedUri)
         // Same-directory auto playlist for plain local files.
         if (queueSource == null) viewModel.maybeInitLocalQueue(fileLoadedUri)
@@ -701,13 +787,23 @@ class PlayerActivity : AppCompatActivity() {
             viewModel.setAlbumArt(art)
             nowPlayingHolder.update(nowPlayingHolder.state.value.copy(artwork = art))
           }
-          // Try to find a sibling .lrc next to a file:// source and load it.
-          autoFindLyricsText()?.let { (text, name) ->
-            viewModel.setLyricText(text, name)
+          // Lyrics sources: sibling .lrc first, then the file's own embedded lyric tag.
+          val extLrc = autoFindLyricsText()
+          if (extLrc != null) {
+            viewModel.setLyricText(extLrc.first, extLrc.second)
+          } else {
+            val embedded = MPVLib.getPropertyString("metadata/by-key/lyrics").orEmpty()
+            if (embedded.isNotBlank()) {
+              val lyricLabel = fileName + " [内置歌词]"
+              viewModel.setLyricText(embedded, lyricLabel)
+            }
           }
         }
         setOrientation()
         viewModel.changeVideoAspect(playerPreferences.videoAspect.get())
+        // Reveal the correct UI only after mode/container settled to avoid a
+        // flash of the wrong player page.
+        lifecycleScope.launch { delay(250); playerUiReady = true }
       }
 
       MPVLib.mpvEventId.MPV_EVENT_PLAYBACK_RESTART -> player.isExiting = false
@@ -767,7 +863,9 @@ class PlayerActivity : AppCompatActivity() {
   }
 
   private suspend fun saveToHistory(fileName: String) {
-    val playbackUri = intent.data?.toString() ?: fileName
+    // Queue-driven loads have no intent.data; history must store the real source.
+    val playbackUri = historySource ?: intent.data?.toString() ?: fileName
+    android.util.Log.i("AudioUX", "saveToHistory uri=" + playbackUri)
     val title = MPVLib.getPropertyString("media-title").orEmpty()
       .takeIf { it.isNotBlank() && !it.isDigitsOnly() } ?: fileName
     val duration = MPVLib.getPropertyDouble("duration")?.toInt() ?: 0
@@ -808,6 +906,12 @@ class PlayerActivity : AppCompatActivity() {
     if (name.isNotBlank()) {
       MPVLib.setOptionString("force-media-title", name)
     }
+    // Reusing an existing player instance: hide the old UI and switch orientation
+    // immediately (audio pages are portrait) so rotation happens before reveal.
+    playerUiReady = false
+    val probeName = name.ifBlank { newData?.substringAfterLast('/').orEmpty() }
+    viewModel.preseedAudioSource(probeName)
+    applyOrientationFor(probeName)
     getPlayableUri(intent)?.let {
       lastLoadedPlayableUri = newData
       MPVLib.command("loadfile", it)
@@ -874,6 +978,17 @@ class PlayerActivity : AppCompatActivity() {
       registerReceiver(pipReceiver, IntentFilter(PIP_INTENTS_FILTER))
     }
     super.onPictureInPictureModeChanged(true, newConfig)
+  }
+
+  /** Synchronous orientation switch based on the target file's container. */
+  private fun applyOrientationFor(targetName: String) {
+    if (targetName.substringAfterLast('.', "").lowercase() in audioExtensions) {
+      if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+      }
+    } else {
+      setOrientation()
+    }
   }
 
   private fun setOrientation() {

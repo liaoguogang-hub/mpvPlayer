@@ -9,9 +9,14 @@
     <string name="generic_unit_ms">ms</string>
     <string name="generic_disabled">Disabled</string>
 
-    <string name="home_pick_file">Pick a file</string>
+    <string name="home_pick_file">Pick a single file (system)</string>
+    <string name="filepicker_back_home">Back to Home</string>
+    <string name="filepicker_play_from_here">Play from this file (current folder)</string>
+    <string name="filepicker_play_folder_recursive">Play folder incl. sub-folders</string>
+    <string name="filepicker_play_now">Play now</string>
+    <string name="filepicker_open_dir">Open folder</string>
     <string name="home_open_file_picker">Open file picker</string>
-    <string name="home_browse_files">Browse files</string>
+    <string name="home_browse_files">Browse files / folders</string>
     <string name="home_open_saf_picker">Open system picker (advanced)</string>
     <string name="home_open_url">Open url</string>
     <string name="home_url_input_label">URL</string>

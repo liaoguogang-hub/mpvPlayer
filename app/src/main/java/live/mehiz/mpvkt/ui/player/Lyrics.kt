@@ -9,6 +9,8 @@ data class LyricDoc(
   val title: String = "",
   val artist: String = "",
   val sourceName: String = "",
+  /** False when the text carries no timestamps (embedded unsynchronised lyric block). */
+  val synced: Boolean = true,
 ) {
   val isEmpty: Boolean get() = lines.isEmpty()
 }
@@ -57,6 +59,15 @@ object LrcParser {
       }
     }
     out.sortBy { it.timeMs }
-    return LyricDoc(lines = out, title = title, artist = artist, sourceName = "")
+    if (out.isNotEmpty()) {
+      return LyricDoc(lines = out, title = title, artist = artist, sourceName = "")
+    }
+    // No [mm:ss] tags found: treat the remaining text as one unsynchronised block.
+    val plain = raw.lineSequence()
+      .map { it.trim() }
+      .filter { it.isNotEmpty() && !it.startsWith("[") }
+      .map { LyricLine(timeMs = 0L, text = it) }
+      .toList()
+    return LyricDoc(lines = plain, title = title, artist = artist, sourceName = "", synced = false)
   }
 }
