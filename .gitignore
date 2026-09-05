@@ -11,3 +11,5 @@ local.properties
 /app/schemas
 /tools/w31_icons_preview/*.png
 /app/keystore.properties
+# Local build/QA artifacts
+work_artifacts/

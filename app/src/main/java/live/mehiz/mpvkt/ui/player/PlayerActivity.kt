@@ -11,7 +11,10 @@ import android.content.ServiceConnection
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
@@ -59,10 +62,13 @@ import live.mehiz.mpvkt.preferences.AudioPreferences
 import live.mehiz.mpvkt.preferences.GesturePreferences
 import live.mehiz.mpvkt.preferences.PlayerPreferences
 import live.mehiz.mpvkt.preferences.SubtitlesPreferences
+import live.mehiz.mpvkt.ui.home.NowPlayingHolder
+import live.mehiz.mpvkt.ui.home.NowPlayingState
 import live.mehiz.mpvkt.ui.player.controls.PlayerControls
 import live.mehiz.mpvkt.ui.theme.MpvKtTheme
 import org.koin.android.ext.android.inject
 import java.io.File
+import java.nio.charset.Charset
 
 @Suppress("TooManyFunctions", "LargeClass")
 class PlayerActivity : AppCompatActivity() {
@@ -82,6 +88,8 @@ class PlayerActivity : AppCompatActivity() {
   private val advancedPreferences: AdvancedPreferences by inject()
   private val gesturePreferences: GesturePreferences by inject()
   private val fileManager: FileManager by inject()
+  private val nowPlayingHolder: NowPlayingHolder by inject()
+  private var lastLoadedPlayableUri: String? = null
 
   private var fileName = ""
   private var mediaPlaybackService: MediaPlaybackService? = null
@@ -127,6 +135,53 @@ class PlayerActivity : AppCompatActivity() {
     getPlayableUri(intent)?.let(player::playFile)
     setOrientation()
 
+    // Audio/video mode integration.
+    //
+    // IMPORTANT: we intentionally NEVER touch MPVView.visibility in audio mode. On
+    // several devices (incl. Huawei) switching a SurfaceView to INVISIBLE/GONE tears
+    // down and re-creates its underlying surface, which strands mpv's video output
+    // pipeline and, in turn, silently stops audio playback. The AudioPlayerOverlay is
+    // an opaque full-screen Compose layer that already sits on top of the MPVView
+    // (player_layout.xml), so the user never sees the surface anyway.
+    lifecycleScope.launch {
+      viewModel.isAudioOnly.collect { audioOnly ->
+        if (audioOnly) {
+          viewModel.startAlbumArtCapture()
+        } else {
+          viewModel.stopAlbumArtCapture()
+        }
+        // Audio page must always be portrait; switching back re-applies the pref.
+        setOrientation()
+      }
+    }
+
+    // Publish current playback state into the Koin singleton that the home-screen
+    // MiniPlayer reads. Updating this on every relevant change keeps the bottom bar in
+    // sync with what the player is actually doing.
+    lifecycleScope.launch {
+      viewModel.audioMetadata.collect { meta: PlayerViewModel.AudioTrackInfo ->
+        nowPlayingHolder.update(
+          NowPlayingState(
+            uri = intent.data?.toString().orEmpty(),
+            title = meta.title,
+            artist = meta.artist,
+            album = meta.album,
+            isPlaying = MPVLib.propBoolean["pause"].value != true,
+            artwork = viewModel.albumArt.value,
+            coreActive = true,
+          ),
+        )
+      }
+    }
+    // Mirror pause state changes.
+    lifecycleScope.launch {
+      MPVLib.propBoolean["pause"].collect { paused ->
+        nowPlayingHolder.update(
+          nowPlayingHolder.state.value.copy(isPlaying = paused != true),
+        )
+      }
+    }
+
     binding.controls.setContent {
       MpvKtTheme {
         PlayerControls(
@@ -156,6 +211,8 @@ class PlayerActivity : AppCompatActivity() {
       unregisterReceiver(noisyReceiver)
       noisyReceiver.initialized = false
     }
+    viewModel.stopAlbumArtCapture()
+    nowPlayingHolder.update(nowPlayingHolder.state.value.copy(coreActive = false, isPlaying = false))
 
     player.isExiting = true
     if (isFinishing) {
@@ -491,6 +548,52 @@ class PlayerActivity : AppCompatActivity() {
     }
   }
 
+  /**
+   * Reads the embedded album art (ID3 APIC / FLAC PICTURE / MP4 covr …) for the
+   * current [intent] data URI using Android's MediaMetadataRetriever.
+   *
+   * Returns null for network streams, files without art, or any error. Runs on the
+   * caller's thread – always invoke from a background coroutine.
+   */
+  private fun extractEmbeddedArtwork(): Bitmap? {
+    val source = intent.data ?: return null
+    if (source.scheme == "http" || source.scheme == "https") return null
+    return runCatching {
+      val retriever = MediaMetadataRetriever()
+      try {
+        retriever.setDataSource(this, source)
+        val raw = retriever.embeddedPicture ?: return@runCatching null
+        BitmapFactory.decodeByteArray(raw, 0, raw.size)
+      } finally {
+        retriever.release()
+      }
+    }.getOrNull()
+  }
+
+  /**
+   * Looks for a "<audio-name>.lrc" file next to the current source on disk.
+   * Only meaningful for file:// (or otherwise path-based) sources – SAF/content
+   * pickers cannot enumerate sibling files, those users can pick an .lrc manually.
+   */
+  private fun autoFindLyricsText(): Pair<String, String>? {
+    val source = intent.data ?: return null
+    if (source.scheme != "file") return null
+    val media = File(source.path ?: return null)
+    if (!media.isFile) return null
+    val base = media.name.substringBeforeLast('.')
+    val lrc = media.parentFile
+      ?.listFiles { f -> f.isFile && f.name.lowercase().endsWith(".lrc") && f.name.substringBeforeLast('.') == base }
+      ?.firstOrNull() ?: return null
+    val raw = try {
+      lrc.readBytes()
+    } catch (e: Exception) {
+      return null
+    }
+    val text = runCatching { String(raw, Charsets.UTF_8) }.getOrNull()
+      ?: runCatching { String(raw, Charset.forName("GBK")) }.getOrNull()
+    return if (text.isNullOrBlank()) null else (text to lrc.name)
+  }
+
   private fun getFileName(intent: Intent): String {
     val uri = if (intent.type == "text/plain") {
       intent.getStringExtra(Intent.EXTRA_TEXT)!!.toUri()
@@ -531,7 +634,16 @@ class PlayerActivity : AppCompatActivity() {
     when (property) {
       "pause" if value -> window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
       "pause" -> window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-      "eof-reached" if value && playerPreferences.closeAfterReachingEndOfVideo.get() -> finishAndRemoveTask()
+      "eof-reached" if value -> {
+        // 1) audiobook sleep timer may want to stop at the end of this track;
+        // 2) otherwise the folder playlist auto-advances (order / repeat / shuffle);
+        // 3) otherwise honor the user's "close after end" preference.
+        val timerConsumed = viewModel.notifyAudioEndOfFile()
+        val queueAdvanced = !timerConsumed && viewModel.playAfterEndOfTrack()
+        if (!timerConsumed && !queueAdvanced && playerPreferences.closeAfterReachingEndOfVideo.get()) {
+          finishAndRemoveTask()
+        }
+      }
     }
   }
 
@@ -560,14 +672,39 @@ class PlayerActivity : AppCompatActivity() {
     if (player.isExiting) return
     when (eventId) {
       MPVLib.mpvEventId.MPV_EVENT_FILE_LOADED -> {
-        fileName = getFileName(intent)
-        setIntentExtras(intent.extras)
+        // A queue-driven load (folder playlist) replaces the intent as the source of
+        // truth for this file: its display name and URI come from the queue entry.
+        val queueSource = viewModel.takePendingQueueSource()
+        val fileLoadedUri = queueSource ?: intent.data?.toString()
+        fileName = if (queueSource != null) {
+          viewModel.queue.value.entries.getOrNull(viewModel.queue.value.index)?.title ?: getFileName(intent)
+        } else {
+          getFileName(intent)
+        }
+        lastLoadedPlayableUri = fileLoadedUri
+        viewModel.setAudioSource(fileName, fileLoadedUri)
+        viewModel.notifyAudioFileLoaded(fileLoadedUri)
+        // Same-directory auto playlist for plain local files.
+        if (queueSource == null) viewModel.maybeInitLocalQueue(fileLoadedUri)
+        if (queueSource == null) setIntentExtras(intent.extras)
         // W31.19: media-title 已由 onCreate/onNewIntent 的 force-media-title option 控制,
         // 不再在 FILE_LOADED 后兜底 setPropertyString (会和 mpv 内部 metadata update race,
         // 导致显示成 3 位数字 episode number 而不是 fileName)
         lifecycleScope.launch(Dispatchers.IO) {
           loadVideoPlaybackState(fileName)
           saveToHistory(fileName)
+          // Extract embedded cover art for the audio overlay / mini player. Uses
+          // MediaMetadataRetriever (Android API) – never touches mpv's video pipeline,
+          // so audio playback can never be stalled by it.
+          val art = extractEmbeddedArtwork()
+          if (art != null) {
+            viewModel.setAlbumArt(art)
+            nowPlayingHolder.update(nowPlayingHolder.state.value.copy(artwork = art))
+          }
+          // Try to find a sibling .lrc next to a file:// source and load it.
+          autoFindLyricsText()?.let { (text, name) ->
+            viewModel.setLyricText(text, name)
+          }
         }
         setOrientation()
         viewModel.changeVideoAspect(playerPreferences.videoAspect.get())
@@ -659,12 +796,22 @@ class PlayerActivity : AppCompatActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
 
+    val newData = intent.data?.toString()
+    // Re-opening the SAME file (e.g. tapping the home-screen MiniPlayer while the
+    // singleTask activity is already alive in the background) must not restart it.
+    if (newData != null && newData == lastLoadedPlayableUri) {
+      setIntent(intent)
+      return
+    }
     // W31.19: 同 onCreate,先 setOptionString 再 loadfile,强制用 fileName 作 title
     val name = getFileName(intent)
     if (name.isNotBlank()) {
       MPVLib.setOptionString("force-media-title", name)
     }
-    getPlayableUri(intent)?.let { MPVLib.command("loadfile", it) }
+    getPlayableUri(intent)?.let {
+      lastLoadedPlayableUri = newData
+      MPVLib.command("loadfile", it)
+    }
     setIntent(intent)
   }
 
@@ -730,6 +877,14 @@ class PlayerActivity : AppCompatActivity() {
   }
 
   private fun setOrientation() {
+    // Audio-only playback uses a dedicated portrait music page regardless of the
+    // orientation preference (video UI follows the preference again on exit).
+    if (viewModel.isAudioOnly.value) {
+      if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+      }
+      return
+    }
     requestedOrientation = when (playerPreferences.orientation.get()) {
       PlayerOrientation.Free -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
       PlayerOrientation.Video -> if ((player.getVideoOutAspect() ?: 0.0) > 1.0) {

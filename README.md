@@ -8,6 +8,7 @@ A media player for Android based on [mpv-android](https://github.com/mpv-android
 - Easier customization
 - Sleep timer, Speed presets
 - Smoother PiP
+- **Audio + video integrated player** (v0.4.0+): mpvKt now plays audio-only files (mp3 / flac / opus / m4a …) with a dedicated music-player page — file name in the top bar, embedded album art, seekbar with timers, playlist prev/play-pause/next, ±10 s seek, playback speed (0.5–2×) and pitch (±7 semitones), synchronized LRC lyrics (auto-load a sibling .lrc or pick one), and an audiobook-style sleep timer (countdown / stop at end of current track / stop after N more tracks). The home-screen mini-player re-opens the player on tap. Set the UI policy in **Settings → Player → Audio mode**: *Auto* (default), *Always audio UI*, or *Always video UI*.
 
 ## Showcase
 

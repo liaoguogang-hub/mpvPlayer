@@ -2,6 +2,7 @@ package live.mehiz.mpvkt.preferences
 
 import live.mehiz.mpvkt.preferences.preference.PreferenceStore
 import live.mehiz.mpvkt.preferences.preference.getEnum
+import live.mehiz.mpvkt.ui.player.AudioMode
 import live.mehiz.mpvkt.ui.player.PlayerOrientation
 import live.mehiz.mpvkt.ui.player.VideoAspect
 
@@ -27,6 +28,9 @@ class PlayerPreferences(
   val currentChaptersIndicator = preferenceStore.getBoolean("show_video_chapter_indicator", true)
   val showChaptersButton = preferenceStore.getBoolean("show_video_chapters_button")
 
+  /** How to surface audio-only files. See [AudioMode]. */
+  val audioMode = preferenceStore.getEnum("audio_mode", AudioMode.Auto)
+
   val defaultSpeed = preferenceStore.getFloat("default_speed", 1f)
   val speedPresets = preferenceStore.getStringSet(
     "default_speed_presets",
@@ -50,6 +54,7 @@ class PlayerPreferences(
   val playerTimeToDisappear = preferenceStore.getInt("player_time_to_disappear", 4000)
 
   val panelTransparency = preferenceStore.getFloat("panel_transparency", 0.6f)
+  val lyricsTextScale = preferenceStore.getFloat("audio_lyrics_text_scale", 1f)
 
   val primaryCustomButtonId = preferenceStore.getInt("player_custom_button_id", 0)
 }

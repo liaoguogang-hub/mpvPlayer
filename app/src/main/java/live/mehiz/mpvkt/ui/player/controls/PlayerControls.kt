@@ -109,6 +109,7 @@ fun PlayerControls(
   val audioPreferences = koinInject<AudioPreferences>()
   val interactionSource = remember { MutableInteractionSource() }
   val controlsShown by viewModel.controlsShown.collectAsState()
+  val isAudioOnly by viewModel.isAudioOnly.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
   val seekBarShown by viewModel.seekBarShown.collectAsState()
   val pausedForCache by MPVLib.propBoolean["paused-for-cache"].collectAsState()
@@ -162,38 +163,49 @@ fun PlayerControls(
       viewModel.hideControls()
     }
   }
+  // Reset controlsShown on mode transitions so the new UI is immediately visible.
+  LaunchedEffect(isAudioOnly) {
+    viewModel.showControls()
+  }
   val transparentOverlay by animateFloatAsState(
     if (controlsShown && !areControlsLocked) .8f else 0f,
     animationSpec = playerControlsExitAnimationSpec(),
     label = "controls_transparent_overlay",
   )
-  GestureHandler(
-    viewModel = viewModel,
-    interactionSource = interactionSource,
-  )
-  DoubleTapToSeekOvals(doubleTapSeekAmount, seekText, showDoubleTapOvals, showSeekIcon, showSeekTime, interactionSource)
-  CompositionLocalProvider(
-    LocalRippleConfiguration provides playerRippleConfiguration,
-    LocalPlayerButtonsClickEvent provides { resetControls = !resetControls },
-    LocalContentColor provides Color.White,
-  ) {
+  if (isAudioOnly) {
+    AudioPlayerOverlay(
+      viewModel = viewModel,
+      onBackPress = onBackPress,
+      modifier = modifier,
+    )
+  } else {
+    GestureHandler(
+      viewModel = viewModel,
+      interactionSource = interactionSource,
+    )
+    DoubleTapToSeekOvals(doubleTapSeekAmount, seekText, showDoubleTapOvals, showSeekIcon, showSeekTime, interactionSource)
     CompositionLocalProvider(
-      LocalLayoutDirection provides LayoutDirection.Ltr,
+      LocalRippleConfiguration provides playerRippleConfiguration,
+      LocalPlayerButtonsClickEvent provides { resetControls = !resetControls },
+      LocalContentColor provides Color.White,
     ) {
-      ConstraintLayout(
-        modifier = modifier
-          .fillMaxSize()
-          .background(
-            Brush.verticalGradient(
-              Pair(0f, Color.Black),
-              Pair(.2f, Color.Transparent),
-              Pair(.7f, Color.Transparent),
-              Pair(1f, Color.Black),
-            ),
-            alpha = transparentOverlay,
-          )
-          .padding(horizontal = MaterialTheme.spacing.medium),
+      CompositionLocalProvider(
+        LocalLayoutDirection provides LayoutDirection.Ltr,
       ) {
+        ConstraintLayout(
+          modifier = modifier
+            .fillMaxSize()
+            .background(
+              Brush.verticalGradient(
+                Pair(0f, Color.Black),
+                Pair(.2f, Color.Transparent),
+                Pair(.7f, Color.Transparent),
+                Pair(1f, Color.Black),
+              ),
+              alpha = transparentOverlay,
+            )
+            .padding(horizontal = MaterialTheme.spacing.medium),
+        ) {
         val (topLeftControls, topRightControls) = createRefs()
         val (volumeSlider, brightnessSlider) = createRefs()
         val unlockControlsButton = createRef()
@@ -573,6 +585,8 @@ fun PlayerControls(
         }
       }
     }
+    }
+    }
     val sheetShown by viewModel.sheetShown.collectAsState()
     val subtitles by viewModel.subtitleTracks.collectAsState(persistentListOf())
     val audioTracks by viewModel.audioTracks.collectAsState(persistentListOf())
@@ -638,7 +652,6 @@ fun PlayerControls(
       )
     }
   }
-}
 
 fun <T> playerControlsExitAnimationSpec(): FiniteAnimationSpec<T> = tween(
   durationMillis = 300,

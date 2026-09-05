@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -43,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +56,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import com.github.k1rakishou.fsaf.FileManager
 import `is`.xyz.mpv.Utils.PROTOCOLS
@@ -112,9 +116,56 @@ object HomeScreen : Screen, KoinComponent {
       },
     ) { padding ->
       Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // Mini-player: pinned at the bottom, appears whenever mpv is playing anything.
+        // It is drawn AFTER the Column so it floats above the scroll content.
+        // We resolve the holder once (Composable scope) so the button lambdas don't
+        // need to re-resolve it themselves.
+        val nowPlayingHolder = koinInject<NowPlayingHolder>()
+        val nowPlayingState by nowPlayingHolder.state.collectAsState()
+        val miniPlayerVisible = nowPlayingState.hasContent && !showSmb
+        // Mini-player floats ABOVE the scroll content (declared later than the Column)
+        // so taps on the strip are never swallowed by the scroll container.
+        if (miniPlayerVisible) {
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .zIndex(2f),
+            contentAlignment = Alignment.BottomCenter,
+          ) {
+            MiniPlayer(
+              modifier = Modifier.navigationBarsPadding(),
+              onPlayPause = {
+                val state = nowPlayingHolder.state.value
+                if (!state.coreActive) {
+                  // mpv core is gone (player was closed): reopening PlayerActivity is the
+                  // only way to resume, so the play button falls back to opening the player.
+                  openPlayerIntent(context, state.uri)
+                } else {
+                  val action = if (state.isPlaying) {
+                    live.mehiz.mpvkt.ui.player.MediaPlaybackService.ACTION_PAUSE
+                  } else {
+                    live.mehiz.mpvkt.ui.player.MediaPlaybackService.ACTION_PLAY
+                  }
+                  context.startService(
+                    Intent(context, live.mehiz.mpvkt.ui.player.MediaPlaybackService::class.java)
+                      .setAction(action),
+                  )
+                }
+              },
+              onClose = {
+                nowPlayingHolder.clear()
+                context.startService(
+                  Intent(context, live.mehiz.mpvkt.ui.player.MediaPlaybackService::class.java)
+                    .setAction(live.mehiz.mpvkt.ui.player.MediaPlaybackService.ACTION_STOP),
+                )
+              },
+            )
+          }
+        }
         Column(
           modifier = Modifier
             .fillMaxSize()
+            .padding(bottom = if (miniPlayerVisible) 88.dp else 0.dp)
             .verticalScroll(rememberScrollState()),
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.Top,
@@ -387,8 +438,20 @@ object HomeScreen : Screen, KoinComponent {
       }
       return
     }
-    val i = Intent(Intent.ACTION_VIEW, filepath.toUri())
-    i.setClass(context, PlayerActivity::class.java)
+    openPlayerIntent(context, filepath)
+  }
+
+  /** Launch [PlayerActivity] on [uri], reusing an existing singleTask instance if present. */
+  private fun openPlayerIntent(context: Context, uri: String) {
+    if (uri.isBlank()) return
+    val i = Intent(Intent.ACTION_VIEW, uri.toUri()).apply {
+      setClass(context, PlayerActivity::class.java)
+      addFlags(
+        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+          Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_GRANT_READ_URI_PERMISSION,
+      )
+    }
     context.startActivity(i)
   }
 }

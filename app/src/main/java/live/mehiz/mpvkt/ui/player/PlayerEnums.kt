@@ -22,6 +22,19 @@ enum class VideoAspect(@StringRes val titleRes: Int) {
   Stretch(R.string.player_aspect_stretch),
 }
 
+/**
+ * Controls how the player surfaces audio-only files (mp3/flac/opus/... or any file with no video track).
+ *
+ * - [Auto]:        show audio UI iff the loaded file has no video track (default, backwards compatible).
+ * - [AudioOnly]:   always render audio UI (forces MPVView hidden, useful when listening to music videos).
+ * - [VideoUiOnly]: always render the existing video-centric UI even for audio-only files.
+ */
+enum class AudioMode(@StringRes val titleRes: Int, @StringRes val summaryRes: Int) {
+  Auto(R.string.pref_audio_mode_auto, R.string.pref_audio_mode_auto_summary),
+  AudioOnly(R.string.pref_audio_mode_audio, R.string.pref_audio_mode_audio_summary),
+  VideoUiOnly(R.string.pref_audio_mode_video, R.string.pref_audio_mode_video_summary),
+}
+
 enum class SingleActionGesture(@StringRes val titleRes: Int) {
   None(R.string.pref_gesture_double_tap_none),
   Seek(R.string.pref_gesture_double_tap_seek),

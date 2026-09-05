@@ -240,7 +240,11 @@ class MediaPlaybackService : MediaBrowserServiceCompat(), MPVLib.EventObserver {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val audioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
-        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+        // Use CONTENT_TYPE_MUSIC for the notification / system MediaSession so the system
+        // groups the controls under "Music" rather than "Videos" (matters for the
+        // notification shade, lock-screen media controls, Auto, Wear OS, etc.). mpv
+        // can play both, but the dominant use of background playback is audio.
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
       audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -313,19 +317,43 @@ class MediaPlaybackService : MediaBrowserServiceCompat(), MPVLib.EventObserver {
 
   private fun updateMediaSessionMetadata() {
     try {
-      val metadataBuilder = MediaMetadataCompat.Builder()
-        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, mediaTitle)
-        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, mediaArtist)
-        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs ?: 0L)
-        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, mediaTitle)
-        .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaTitle.hashCode().toString())
+      // Pull the latest metadata from mpv so lock-screen / notification UI shows the
+      // current track, not the one that was playing when the service started.
+      val liveTitle = MPVLib.getPropertyString("media-title") ?: mediaTitle
+      val liveArtist = MPVLib.getPropertyString("metadata/artist") ?: mediaArtist
+      val liveAlbum = MPVLib.getPropertyString("metadata/album") ?: ""
+      val liveTrackNo = MPVLib.getPropertyInt("metadata/track") ?: 0
 
-      mediaThumbnail?.let {
+      val metadataBuilder = MediaMetadataCompat.Builder()
+        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, liveTitle)
+        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, liveArtist)
+        .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, liveAlbum)
+        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs ?: 0L)
+        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, liveTitle)
+        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, liveArtist)
+        .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, liveTitle.hashCode().toString())
+
+      if (liveTrackNo > 0) {
+        metadataBuilder.putLong(MediaMetadataCompat.METADATA_KEY_TRACK_NUMBER, liveTrackNo.toLong())
+      }
+      if (liveAlbum.isNotBlank()) {
+        metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, liveAlbum)
+      }
+
+      // Refresh the thumbnail too – mpv's --audio-display=attachment keeps the
+      // embedded picture in the video pipeline so grabThumbnail() picks it up for
+      // audio-only files.
+      val refreshedThumb = runCatching { MPVLib.grabThumbnail(1080) }.getOrNull()
+      val effectiveThumb = refreshedThumb ?: mediaThumbnail
+      effectiveThumb?.let {
         metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
         metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it)
       }
 
       mediaSession.setMetadata(metadataBuilder.build())
+      mediaTitle = liveTitle
+      mediaArtist = liveArtist
+      mediaThumbnail = effectiveThumb
     } catch (e: Exception) {
       Log.e(TAG, "Error updating metadata", e)
     }

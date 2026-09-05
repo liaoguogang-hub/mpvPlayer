@@ -87,6 +87,12 @@ class MPVView(context: Context, attributes: AttributeSet) : BaseMPVView(context,
     MPVLib.setOptionString("speed", playerPreferences.defaultSpeed.get().toString())
     // workaround for <https://github.com/mpv-player/mpv/issues/14651>
     MPVLib.setOptionString("vd-lavc-film-grain", "cpu")
+    // We deliberately DO NOT pass --audio-display=attachment here. That option forces
+    // mpv to route the embedded album-art through the video output pipeline so
+    // grabThumbnail() can pick it up. The side effect: when MPVView is hidden in
+    // audio mode, the underlying SurfaceView's surface is destroyed which strands
+    // mpv's video pipeline and silently kills audio playback as well. Cover art is
+    // now extracted separately via MediaMetadataRetriever (see PlayerViewModel).
 
     setupSubtitlesOptions()
     setupAudioOptions()

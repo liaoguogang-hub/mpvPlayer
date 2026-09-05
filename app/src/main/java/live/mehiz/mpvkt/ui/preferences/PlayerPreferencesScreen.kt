@@ -23,6 +23,7 @@ import androidx.compose.ui.text.AnnotatedString
 import kotlinx.serialization.Serializable
 import live.mehiz.mpvkt.R
 import live.mehiz.mpvkt.preferences.PlayerPreferences
+import live.mehiz.mpvkt.ui.player.AudioMode
 import live.mehiz.mpvkt.preferences.preference.collectAsState
 import live.mehiz.mpvkt.presentation.Screen
 import live.mehiz.mpvkt.ui.player.PlayerOrientation
@@ -70,6 +71,17 @@ object PlayerPreferencesScreen : Screen {
             valueToText = { AnnotatedString(context.getString(it.titleRes)) },
             title = { Text(text = stringResource(id = R.string.pref_player_orientation)) },
             summary = { Text(text = stringResource(id = orientation.titleRes)) },
+          )
+          // Audio mode picker: drives whether the activity swaps to the music-style UI
+          // for audio-only files. See [AudioMode] for details on each entry.
+          val audioMode by preferences.audioMode.collectAsState()
+          ListPreference(
+            value = audioMode,
+            onValueChange = preferences.audioMode::set,
+            values = AudioMode.entries,
+            valueToText = { AnnotatedString(context.getString(it.titleRes)) },
+            title = { Text(text = stringResource(id = R.string.pref_audio_mode_title)) },
+            summary = { Text(text = stringResource(id = audioMode.summaryRes)) },
           )
           val drawOverDisplayCutout by preferences.drawOverDisplayCutout.collectAsState()
           SwitchPreference(
